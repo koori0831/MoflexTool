@@ -12,7 +12,8 @@ internal static class EncodeCommand
         string? wav = null;
         int w = 0, h = 0, q = 30, fn = 1001, fd = 30000;
         bool noAudio = false, pcm16 = false;
-        int pq = 32, gop = 240;
+        int pq = 32, gop = 240, rate = 47864;
+        var stereo = StereoMode.None;
         for (int i = 2; i < a.Length; i++)
             switch (a[i])
             {
@@ -25,6 +26,8 @@ internal static class EncodeCommand
                 case "--pcm": pcm16 = true; break;
                 case "--pq": pq = int.Parse(a[++i]); break;
                 case "--gop": gop = int.Parse(a[++i]); break;
+                case "--rate": rate = int.Parse(a[++i]); break;
+                case "--stereo": stereo = Enum.Parse<StereoMode>(a[++i], true); break;
                 case "--ffmpeg": ffmpeg = a[++i]; break;
             }
         if (w == 0 || h == 0) throw new ArgumentException("--size WxH is required.");
@@ -33,7 +36,7 @@ internal static class EncodeCommand
         try
         {
             string yuv = input;
-            int rate = 32000, ch = 2;
+            int ch = 2;
             if (!input.EndsWith(".yuv", StringComparison.OrdinalIgnoreCase))
             {
                 yuv = Path.Combine(tmp, "v.yuv");
@@ -46,7 +49,8 @@ internal static class EncodeCommand
                 }
             }
             short[][]? pcm = null;
-            if (!noAudio && wav != null) pcm = ReadWav(wav, out rate, out ch);
+            int wavRate;
+            if (!noAudio && wav != null) pcm = ReadWav(wav, out wavRate, out ch);
             int fs = w * h * 3 / 2;
             var raw = File.ReadAllBytes(yuv);
             IEnumerable<YuvFrame> Frames()
@@ -59,7 +63,7 @@ internal static class EncodeCommand
             }
             var opt = new MovieEncodeOptions
             {
-                Width = w, Height = h, FrameDurNum = fn, FrameDurDen = fd, Quantizer = q, PredictedQuantizer = pq, MaxKeyInterval = gop,
+                Width = w, Height = h, FrameDurNum = fn, FrameDurDen = stereo == StereoMode.Duplicate ? fd * 2 : fd, Quantizer = q, PredictedQuantizer = pq, MaxKeyInterval = gop, Stereo = stereo,
                 Audio = pcm == null ? AudioFormat.None : pcm16 ? AudioFormat.Pcm16 : AudioFormat.ImaAdpcm,
                 SampleRate = rate, Channels = ch,
             };

@@ -6,24 +6,38 @@ namespace Moflex.Core;
 
 public enum AudioFormat { None, ImaAdpcm, Pcm16 }
 
+/// <summary>How video frames map to eyes.</summary>
+public enum StereoMode
+{
+    /// <summary>Plain 2D video, one frame per time stamp.</summary>
+    None,
+    /// <summary>Input already alternates left/right frames (two frames share a time stamp), like the game's own movies.</summary>
+    Interleaved,
+    /// <summary>Each input frame is used for both eyes (flat picture shown in stereoscopic layout).</summary>
+    Duplicate,
+}
+
 public sealed class MovieEncodeOptions
 {
     public int Width { get; set; }
     public int Height { get; set; }
-    /// <summary>Frame duration is FrameDurNum / FrameDurDen seconds (both must fit in 16 bits).</summary>
+    /// <summary>Duration of one stored frame is FrameDurNum / FrameDurDen seconds (both must fit in 16 bits).</summary>
     public int FrameDurNum { get; set; } = 1001;
     public int FrameDurDen { get; set; } = 30000;
     /// <summary>Quantiser for key frames (12..63).</summary>
     public int Quantizer { get; set; } = 30;
     /// <summary>Quantiser for predicted frames (12..161).</summary>
     public int PredictedQuantizer { get; set; } = 32;
-    /// <summary>Maximum distance between key frames (1 = all key frames).</summary>
+    /// <summary>Maximum distance between key frames in stored frames (1 = all key frames).</summary>
     public int MaxKeyInterval { get; set; } = 240;
     /// <summary>Mean absolute luma difference between frames above which a key frame is forced (scene cut).</summary>
     public double SceneCutThreshold { get; set; } = 28;
+    public StereoMode Stereo { get; set; } = StereoMode.None;
     public AudioFormat Audio { get; set; } = AudioFormat.ImaAdpcm;
     public int SampleRate { get; set; } = 32000;
     public int Channels { get; set; } = 2;
+    /// <summary>Write the seek table (data stream) like existing files.</summary>
+    public bool SeekTable { get; set; } = true;
 }
 
 /// <summary>Encodes raw frames and PCM into a complete MOFLEX file.</summary>
@@ -38,12 +52,15 @@ public static class MovieEncoder
 
     public static byte[] Encode(IEnumerable<YuvFrame> frames, short[][]? pcm, MovieEncodeOptions o)
     {
+        bool stereo = o.Stereo != StereoMode.None;
+        int group = stereo ? 2 : 1; // stored frames per time stamp
         var streams = new List<StreamInfo>
         {
             new StreamInfo
             {
-                Index = 0, Kind = StreamKind.Video, DescriptorType = 3, CodecId = 0, Width = o.Width, Height = o.Height,
-                TimeBaseNum = o.FrameDurNum, TimeBaseDen = o.FrameDurDen, Reserved = new byte[] { 1, 1, 0 },
+                Index = 0, Kind = StreamKind.Video, DescriptorType = stereo ? 3 : 1, CodecId = 0, Width = o.Width, Height = o.Height,
+                TimeBaseNum = o.FrameDurNum, TimeBaseDen = o.FrameDurDen,
+                Reserved = stereo ? new byte[] { 1, 1, 0 } : new byte[] { 1, 1 }, // 0 = left-first interleaved layout
             },
         };
         bool audio = o.Audio != AudioFormat.None && pcm != null;
@@ -53,41 +70,61 @@ public static class MovieEncoder
                 Index = 1, Kind = StreamKind.Audio, DescriptorType = 2, CodecId = o.Audio == AudioFormat.ImaAdpcm ? 1 : 2,
                 SampleRate = o.SampleRate, Channels = o.Channels, Reserved = Array.Empty<byte>(),
             });
+        if (o.SeekTable)
+            streams.Add(new StreamInfo { Index = audio ? 2 : 1, Kind = StreamKind.Data, DescriptorType = 4, Reserved = new byte[] { 0 } });
         var header = new MoflexHeader { Timestamp = 1, BlockSize = 4096, Streams = streams };
 
+        // time stamp of the k-th group of stored frames, microseconds (+1: files start at 1)
+        long VideoTime(long frame) => frame / group * (long)group * o.FrameDurNum * 1000000L / o.FrameDurDen + 1;
+
         var packets = new List<MuxPacket>();
-        var enc = new MobiclipEncoder(o.Width, o.Height, o.Quantizer);
+        var enc = new MobiclipEncoder(o.Width, o.Height, o.Quantizer) { MaxRefs = stereo ? 2 : 1 };
         long n = 0;
         YuvFrame? prev = null;
         int sinceKey = 0;
-        foreach (var f in frames)
+        void EncodeOne(YuvFrame f)
         {
-            bool key = prev == null || sinceKey >= o.MaxKeyInterval || MeanAbsDiff(prev, f) > o.SceneCutThreshold;
+            // a scene cut is only allowed on the first frame of a stamp group
+            bool canCut = n % group == 0;
+            bool key = prev == null || (canCut && (sinceKey >= o.MaxKeyInterval || MeanAbsDiff(prev, f) > o.SceneCutThreshold));
             var data = key ? enc.EncodeKeyFrame(f, out _) : enc.EncodePredictedFrame(f, o.PredictedQuantizer, out _);
             sinceKey = key ? 1 : sinceKey + 1;
             prev = f;
-            packets.Add(new MuxPacket
-            {
-                StreamIndex = 0, Data = data, Value1 = 1,
-                TimestampUs = (long)Math.Round(n * 1e6 * o.FrameDurNum / o.FrameDurDen),
-            });
+            packets.Add(new MuxPacket { StreamIndex = 0, Data = data, TimeUs = VideoTime(n), IsSync = key, FrameIndex = (int)n });
             n++;
         }
+        foreach (var f in frames)
+        {
+            EncodeOne(f);
+            if (o.Stereo == StereoMode.Duplicate) EncodeOne(f);
+        }
+        long totalFrames = n;
+        long duration = (totalFrames + group - 1) / group * (long)group * o.FrameDurNum * 1000000L / o.FrameDurDen;
+
         if (audio)
         {
             int total = pcm![0].Length;
+            int audioStream = 1;
             if (o.Audio == AudioFormat.ImaAdpcm)
             {
-                const int per = 1536; // samples per packet, as in existing files
-                int padded = (total + per - 1) / per * per;
+                // Packet boundaries follow the video time stamps: one packet per stamp group, rounded to 256-sample sub-frames.
+                double perGroup = o.SampleRate * (double)group * o.FrameDurNum / o.FrameDurDen;
+                int padded = (total + 255) / 256 * 256;
                 var src = pcm.Select(c => { var a = new short[padded]; Array.Copy(c, a, total); return a; }).ToArray();
                 var st = new ImaMoflex.State[o.Channels];
-                for (int off = 0, i = 0; off < padded; off += per, i++)
+                int off = 0;
+                for (int i = 1; off < padded; i++)
+                {
+                    int end = (int)Math.Floor(i * perGroup / 256 + 0.5) * 256;
+                    if (end <= off) end = off + 256;
+                    if (end > padded || padded - end < 256) end = padded;
                     packets.Add(new MuxPacket
                     {
-                        StreamIndex = 1, Data = ImaMoflex.EncodePacket(src, off, per, st, i == 0),
-                        TimestampUs = (long)Math.Round(off * 1e6 / o.SampleRate),
+                        StreamIndex = audioStream, Data = ImaMoflex.EncodePacket(src, off, end - off, st, off == 0),
+                        TimeUs = off * 1000000L / o.SampleRate + 1,
                     });
+                    off = end;
+                }
             }
             else
             {
@@ -102,12 +139,10 @@ public static class MovieEncoder
                             short s = pcm[c][off + i];
                             b[(i * o.Channels + c) * 2] = (byte)s; b[(i * o.Channels + c) * 2 + 1] = (byte)(s >> 8);
                         }
-                    packets.Add(new MuxPacket { StreamIndex = 1, Data = b, TimestampUs = (long)Math.Round(off * 1e6 / o.SampleRate) });
+                    packets.Add(new MuxPacket { StreamIndex = audioStream, Data = b, TimeUs = off * 1000000L / o.SampleRate + 1 });
                 }
             }
         }
-        // interleave by time (video first on ties)
-        var ordered = packets.Select((p, i) => (p, i)).OrderBy(t => t.p.TimestampUs).ThenBy(t => t.p.StreamIndex).ThenBy(t => t.i).Select(t => t.p).ToList();
-        return MoflexMuxer.Mux(header, ordered);
+        return MoflexMuxer.Mux(header, packets, new MuxOptions { TotalFrames = (int)totalFrames, DurationUs = duration, VideoLeadUs = o.FrameDurNum * 1000000L / o.FrameDurDen });
     }
 }

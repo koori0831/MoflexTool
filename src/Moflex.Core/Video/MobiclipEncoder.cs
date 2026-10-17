@@ -20,6 +20,9 @@ public sealed class MobiclipEncoder
     public int KeyFrameTable { get; set; } = 1;
     /// <summary>Full-pel search radius for motion estimation.</summary>
     public int SearchRange { get; set; } = 8;
+    /// <summary>Number of previous pictures a predicted macroblock may reference (use 2 for interleaved stereo).</summary>
+    public int MaxRefs { get; set; } = 1;
+    private int _sinceKey;
 
     public MobiclipEncoder(int width, int height, int quantizer = 30)
     {
@@ -386,9 +389,9 @@ public sealed class MobiclipEncoder
         return sad;
     }
 
-    private (int x, int y) Search(YuvFrame src, int x, int y, (int x, int y) pred)
+    private (int x, int y) Search(YuvFrame src, int x, int y, (int x, int y) pred, int back)
     {
-        var refY = _dec.RefFrame(1)[0];
+        var refY = _dec.RefFrame(back)[0];
         int bestSad = int.MaxValue;
         (int x, int y) best = (0, 0);
         void Try(int mx, int my)
@@ -437,6 +440,7 @@ public sealed class MobiclipEncoder
             }
         recon = Snapshot(frame, true);
         _dec.AdvanceFrame();
+        _sinceKey = 1;
         return bw.ToPacket();
     }
 
@@ -476,9 +480,13 @@ public sealed class MobiclipEncoder
                     }
                 }
                 Consider(0, pred.x, pred.y);
-                var mv = Search(src, x, y, pred);
-                if (mv != pred) Consider(1, mv.x, mv.y);
-                if (mv != (0, 0) && pred != (0, 0)) Consider(1, 0, 0);
+                int refs = Math.Min(MaxRefs, _sinceKey);
+                for (int back = 1; back <= refs; back++)
+                {
+                    var mv = Search(src, x, y, pred, back);
+                    if (back > 1 || mv != pred) Consider(back, mv.x, mv.y);
+                    if (back == 1 && mv != (0, 0) && pred != (0, 0)) Consider(1, 0, 0);
+                }
 
                 var intra = PlanIntraMb(frame, src, x, y, lambda, 0);
                 double intraCost = intra.Cost + lambda * MobiclipDecoder.MvVlc[1][0].Codes[6].Len;
@@ -502,6 +510,7 @@ public sealed class MobiclipEncoder
             }
         recon = Snapshot(frame, false);
         _dec.AdvanceFrame();
+        _sinceKey++;
         return bw.ToPacket();
     }
 

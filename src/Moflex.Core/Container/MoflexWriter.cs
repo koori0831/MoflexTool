@@ -11,11 +11,18 @@ public static class MoflexWriter
         for (int i = parts.Count - 1; i >= 0; i--) s.WriteByte((byte)(parts[i] | (i > 0 ? 0x80 : 0)));
     }
 
-    public static byte[] WriteSyncHeader(MoflexHeader h)
+    public static byte[] WriteSyncHeader(MoflexHeader h) => WriteSyncHeader(h, h.Timestamp);
+
+    /// <summary>Folds the 64-bit timestamp into the 16-bit check field that follows the 'L2' magic.</summary>
+    public static ushort SyncCheck(ulong ts) => (ushort)((ts ^ (ts >> 16) ^ (ts >> 32) ^ (ts >> 48)) ^ 0xAAAA);
+
+    public static byte[] WriteSyncHeader(MoflexHeader h, ulong timestamp)
     {
         var ms = new MemoryStream();
-        ms.Write(new byte[] { 0x4C, 0x32, 0xAA, 0xAB });
-        for (int i = 7; i >= 0; i--) ms.WriteByte((byte)(h.Timestamp >> (i * 8)));
+        ms.Write(new byte[] { 0x4C, 0x32 });
+        ushort chk = SyncCheck(timestamp);
+        ms.WriteByte((byte)(chk >> 8)); ms.WriteByte((byte)chk);
+        for (int i = 7; i >= 0; i--) ms.WriteByte((byte)(timestamp >> (i * 8)));
         ms.WriteByte((byte)((h.BlockSize - 1) >> 8)); ms.WriteByte((byte)(h.BlockSize - 1));
         foreach (var st in h.Streams)
         {
