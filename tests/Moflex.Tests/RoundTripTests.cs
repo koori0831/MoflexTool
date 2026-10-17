@@ -28,4 +28,12 @@ public class RoundTripTests
         var f = MoflexFile.Parse(orig);
         Assert.Equal(orig, MoflexWriter.Rewrite(f, orig));
     }
+
+    [Theory, MemberData(nameof(Samples))]
+    public void MuxerReproducesOriginalFile(string path)
+    {
+        if (path.Length == 0) return;
+        var orig = File.ReadAllBytes(path);
+        Assert.Equal(orig, MoflexRemux.Rebuild(MoflexFile.Parse(orig), orig));
+    }
 }

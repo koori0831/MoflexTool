@@ -87,39 +87,9 @@ internal static class Program
                 case "chunks":
                     foreach (var c in file.Chunks) Console.WriteLine($"{c.BlockIndex},{file.Blocks[c.BlockIndex].Flags},{c.StreamIndex},{(c.End ? 1 : 0)},{c.PayloadLength}");
                     return 0;
-                case "remux": // re-layout every packet of a file into a freshly muxed file
-                {
-                    var orig = File.ReadAllBytes(args[1]);
-                    var vstream = file.Streams.First(x => x.Kind == StreamKind.Video).Index;
-                    var syncTimes = new Dictionary<long, long>();
-                    foreach (var b in file.Blocks.Where(b => b.HeaderLength > 0))
-                    {
-                        ulong ts = 0; for (int i = 0; i < 8; i++) ts = (ts << 8) | orig[b.Offset + 4 + i];
-                        syncTimes[b.Offset] = (long)ts;
-                    }
-                    long segT = 1; int vi = 0;
-                    var blockOf = file.Blocks.ToList();
-                    var pk = new List<MuxPacket>();
-                    var lastSyncBlock = -1;
-                    foreach (var p in file.Packets)
-                    {
-                        // sync headers apply from the block that carries them
-                        var chunk = file.Chunks[p.FirstChunk];
-                        for (int bi = lastSyncBlock + 1; bi <= chunk.BlockIndex; bi++)
-                            if (blockOf[bi].HeaderLength > 0) segT = syncTimes[blockOf[bi].Offset];
-                        lastSyncBlock = Math.Max(lastSyncBlock, chunk.BlockIndex);
-                        var ei = p.EndInfo!.Value;
-                        long rel = ei.Flag == 1 ? -(long)ei.Value2 : (long)ei.Value2;
-                        if (file.Streams.First(x => x.Index == p.StreamIndex).Kind == StreamKind.Data) continue;
-                        bool isV = p.StreamIndex == vstream;
-                        pk.Add(new MuxPacket { StreamIndex = p.StreamIndex, Data = p.Data, TimeUs = segT + rel, IsSync = isV && ei.Value1 == 0, FrameIndex = isV ? vi : 0 });
-                        if (isV) vi++;
-                    }
-                    var dp = file.Packets.FirstOrDefault(x => file.Streams.First(y => y.Index == x.StreamIndex).Kind == StreamKind.Data);
-                    long dur = dp != null ? BitConverter.ToUInt32(dp.Data, 8) : 0;
-                    File.WriteAllBytes(args[2], MoflexMuxer.Mux(file.Header, pk, new MuxOptions { TotalFrames = vi, DurationUs = dur }));
+                case "remux": // rebuild the file from its packets with the muxer
+                    File.WriteAllBytes(args[2], MoflexRemux.Rebuild(file, File.ReadAllBytes(args[1])));
                     return 0;
-                }
                 case "hdr-check":
                 {
                     var orig = File.ReadAllBytes(args[1]);
