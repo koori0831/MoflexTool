@@ -36,6 +36,8 @@ public sealed class MovieEncodeOptions
     public AudioFormat Audio { get; set; } = AudioFormat.ImaAdpcm;
     public int SampleRate { get; set; } = 32000;
     public int Channels { get; set; } = 2;
+    /// <summary>Called after every encoded stored frame with the number of frames done.</summary>
+    public Action<long>? Progress { get; set; }
     /// <summary>Write the seek table (data stream) like existing files.</summary>
     public bool SeekTable { get; set; } = true;
 }
@@ -92,6 +94,7 @@ public static class MovieEncoder
             prev = f;
             packets.Add(new MuxPacket { StreamIndex = 0, Data = data, TimeUs = VideoTime(n), IsSync = key, FrameIndex = (int)n });
             n++;
+            o.Progress?.Invoke(n);
         }
         foreach (var f in frames)
         {

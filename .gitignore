@@ -4,6 +4,9 @@ obj/
 *.user
 *.moflex
 *.mp4
+*.yuv
+*.wav
 samples/
 TestResults/
 refs/
+publish/

@@ -1,3 +1,5 @@
+// MOFLEX IMA-ADPCM packets. The packet layout was confirmed against FFmpeg's libavcodec/adpcm.c
+// (LGPL-2.1-or-later); the ADPCM step/index tables are those of the public IMA/DVI ADPCM standard.
 namespace Moflex.Core.Audio;
 
 /// <summary>

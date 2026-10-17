@@ -149,7 +149,8 @@ public sealed class MoflexFile
                     var kind = header.Streams.FirstOrDefault(s => s.Index == stream)?.Kind ?? StreamKind.Data;
                     packets.Add(new Packet
                     {
-                        StreamIndex = stream, Data = bytes, IsKey = kind != StreamKind.Video || (bytes[0] & 0x80) != 0,
+                        StreamIndex = stream, Data = bytes, // the video bitstream is read in byte-swapped 16-bit words: its first bit is the MSB of byte 1
+                        IsKey = kind != StreamKind.Video || (bytes.Length > 1 && (bytes[1] & 0x80) != 0),
                         Position = blockStart, EndInfo = ei, FirstChunk = pendingFirst[stream], ChunkCount = chunks.Count - pendingFirst[stream],
                     });
                     ms.SetLength(0);

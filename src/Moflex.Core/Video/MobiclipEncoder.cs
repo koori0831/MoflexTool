@@ -1,3 +1,5 @@
+// Mobiclip video encoder (original work). It reuses the decoder's reconstruction code and the
+// FFmpeg-derived tables, so the whole project is distributed under the GNU LGPL v2.1 or later.
 namespace Moflex.Core.Video;
 
 /// <summary>

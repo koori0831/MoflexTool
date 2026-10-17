@@ -1,3 +1,7 @@
+// Mobiclip video decoder.
+// The bitstream syntax and the reconstruction rules follow FFmpeg's libavcodec/mobiclip.c
+// (Copyright (c) 2015-2016 Florian Nouwt, (c) 2017 Adib Surani, (c) 2020 Paul B Mahol), which is licensed
+// under the GNU LGPL v2.1 or later. This C# implementation is a derived work under the same license.
 namespace Moflex.Core.Video;
 
 /// <summary>Decoded planar 4:2:0 frame (planes are tightly packed).</summary>
