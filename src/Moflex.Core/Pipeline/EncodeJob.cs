@@ -32,6 +32,8 @@ public sealed class EncodeJob
     public string? AudioWav { get; set; }
     public bool NoAudio { get; set; }
     public bool Pcm16 { get; set; }
+    /// <summary>Store audio as FastAudio (codec 0). Also chosen automatically when the Like file uses FastAudio.</summary>
+    public bool FastAudio { get; set; }
     public int MaxFrames { get; set; } = int.MaxValue;
     /// <summary>Segments encoded in parallel (0 = one per CPU core).</summary>
     public int Threads { get; set; }
@@ -53,7 +55,7 @@ public sealed class EncodeJob
             w = v.Width; h = v.Height; storedNum = v.TimeBaseNum; storedDen = v.TimeBaseDen;
             if (Stereo == null) stereo = v.DescriptorType == 3 ? StereoMode.Duplicate : StereoMode.None;
             var au = model.Streams.FirstOrDefault(s => s.Kind == StreamKind.Audio);
-            if (au != null) { rate = au.SampleRate; ch = au.Channels; }
+            if (au != null) { rate = au.SampleRate; ch = au.Channels; if (au.CodecId == 0 && !Pcm16) FastAudio = true; }
         }
         bool sbs = SideBySide;
         if (sbs) stereo = StereoMode.Interleaved;
@@ -103,7 +105,7 @@ public sealed class EncodeJob
             {
                 Width = w, Height = h, FrameDurNum = (int)storedNum, FrameDurDen = (int)storedDen,
                 Quantizer = Quantizer, PredictedQuantizer = PredictedQuantizer, MaxKeyInterval = MaxKeyInterval, Stereo = stereo, Threads = Threads,
-                Audio = pcm == null ? AudioFormat.None : Pcm16 ? AudioFormat.Pcm16 : AudioFormat.ImaAdpcm,
+                Audio = pcm == null ? AudioFormat.None : Pcm16 ? AudioFormat.Pcm16 : FastAudio ? AudioFormat.FastAudio : AudioFormat.ImaAdpcm,
                 SampleRate = rate, Channels = ch,
                 Progress = n => Progress?.Invoke(n, total),
             };

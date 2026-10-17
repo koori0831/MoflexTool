@@ -85,6 +85,56 @@ Entries list the sync blocks in file order (the first entry is the frame-0 sync 
 Per channel 4 header bytes (step index s16le, predictor s16le), then 256-sample sub-frames of 128 bytes per
 channel (low nibble first), channels in turn inside a sub-frame. Duration = `size / (ch · 132) · 256` samples.
 
+## Audio packet (FastAudio, codec 0)
+Not used by the DWRD movies. The syntax below follows FFmpeg's `fastaudio` decoder; `FastAudioDecoder` produces
+**bit-identical float output** to FFmpeg (checked on files written by `FastAudioEncoder` and on pseudo-random
+packets, see `FastAudioTests.DecoderMatchesFfmpegBitExactly`). It has not been compared with files made by the
+original encoder, because none of the sample movies use it.
+
+A packet is a whole number of **sub-frames**; one sub-frame is 256 samples of one channel in 40 bytes, and
+channels alternate inside each sub-frame time slot (`sf0 ch0, sf0 ch1, sf1 ch0, …`). Duration =
+`size / (40 · ch) · 256` samples. Packets are cut at the same time-stamp-group boundaries as ADPCM.
+The decoder state (filter memories) carries over from packet to packet; there is no per-packet header.
+
+### Sub-frame bit layout
+The 40 bytes are ten **little-endian 32-bit words**; fields are read **MSB first** from word 0 onward and no
+field crosses a word boundary.
+
+| word | fields (in read order) |
+|---|---|
+| 0 | coefficient indices `c0` 6, `c1` 6, `c2` 5, `c3` 5, `c4` 4, `c6` 3, `c7` 3 bits (`c5` has no field here) |
+| 1 | gain indices of groups 3, 2, 1, 0 (6 bits each), grid phases of groups 3, 2, 1, 0 (2 bits each) |
+| 2–9 | two words per 64-sample group 0…3: pulses p0…p9 (3 bits each), `t1` 2 bits, p10…p19 (3 bits each), `t2` 2 bits |
+
+* Pulse 20 of a group is `(4·t1 + t2) >> 1`; the low bit of `t2` of groups 0…3 (group 0 = MSB) forms the
+  4-bit index `c5`.
+* Excitation of group g: zero except samples `64g + phase + 3j` (j = 0…20) = `gain · (2·p_j − 7)`, where
+  `gain` = the float with bit pattern `(gain_index + 1) << 20`, times 2^116 (≈ 2^-13 … 2^-3, ⅛-octave steps).
+
+### Synthesis
+Coefficient index `ci` selects `m[7 − i] = T_i[ci]` from fixed quantiser tables (`FastAudio.BuildTables`;
+T0/T1 are dense near ±1, T2–T7 have 32/32/16/16/8/8 entries). For every sample the excitation `x` runs
+through an 8-stage all-pole lattice and a de-emphasis:
+
+```
+for j in 0..7: x -= m[j]·f[j];  f[j] += m[j]·x
+f = f[1..7] ++ [x]                      (f[7] is the newest output)
+last = x + 0.86·last;  out = 2·last
+```
+
+`m[8 − i]` is the reflection coefficient k_i of a predictor `A(z) = 1 + Σ a_i z^-i` in the usual
+Levinson–Durbin convention (`A_i(z) = A_{i-1}(z) + k_i z^-i A_{i-1}(1/z)`), so the lattice equals `1/A(z)`
+(checked by `FastAudioTests.LatticeMatchesDirectFormAllPoleFilter`).
+
+### Encoder (MoflexTool's own design)
+Per sub-frame: autocorrelation of the pre-emphasised input (`x[n] − 0.86·x[n−1]`) over a 384-sample Hann
+window centred on the sub-frame, 0.3 % noise floor and a small lag window, Levinson–Durbin, nearest table
+entry per coefficient. Per 64-sample group: analysis by synthesis against the decoder's own filter
+(zero-input response removed), least-squares pulse amplitudes for each of the four grid phases, then a few
+gain candidates with coordinate-descent refinement of the 3-bit levels; the decoder state is advanced with the
+chosen excitation so the encoder never drifts. About 19 dB SNR on game speech/music at 47 864 Hz (60 kbit/s
+per channel, a third of IMA-ADPCM's size), roughly 8× real time on one core.
+
 ## Video packet (Mobiclip)
 The first bit of the packet *after swapping each 16-bit word* is the key-frame flag (not the first payload byte).
 
