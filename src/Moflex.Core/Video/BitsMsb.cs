@@ -44,6 +44,7 @@ internal sealed class Vlc
     private readonly int _maxLen;
     private readonly int[] _sym;
     private readonly byte[] _len;
+    public readonly Dictionary<int, (uint Code, int Len)> Codes = new();
 
     public Vlc(ReadOnlySpan<byte> lens, ReadOnlySpan<int> syms)
     {
@@ -57,6 +58,7 @@ internal sealed class Vlc
             int l = lens[i];
             if (code >> 32 != 0) throw new InvalidDataException("VLC overflow.");
             int c = (int)(code >> (32 - l));
+            Codes.TryAdd(syms[i], ((uint)c, l));
             int lo = c << (_maxLen - l), hi = lo + (1 << (_maxLen - l));
             for (int k = lo; k < hi; k++) { _sym[k] = syms[i]; _len[k] = (byte)l; }
             code += 1UL << (32 - l);
@@ -70,5 +72,35 @@ internal sealed class Vlc
         if (l == 0) throw new InvalidDataException("Invalid VLC code.");
         br.Skip(l);
         return _sym[idx];
+    }
+}
+
+/// <summary>MSB-first bit writer.</summary>
+internal sealed class BitWriterMsb
+{
+    private readonly List<byte> _bytes = new();
+    private int _cur, _n;
+    public int BitCount => _bytes.Count * 8 + _n;
+
+    public void Bit(int b) { _cur = (_cur << 1) | (b & 1); if (++_n == 8) { _bytes.Add((byte)_cur); _cur = 0; _n = 0; } }
+    public void Bits(int v, int count) { for (int i = count - 1; i >= 0; i--) Bit((v >> i) & 1); }
+    public void UE(int v)
+    {
+        int x = v + 1, len = 0;
+        while ((x >> len) > 1) len++;
+        Bits(0, len); Bits(x, len + 1);
+    }
+    public void SE(int v) => UE(v > 0 ? 2 * v - 1 : -2 * v);
+    public void Code(Vlc vlc, int sym) { var (c, l) = vlc.Codes[sym]; Bits((int)c, l); }
+
+    /// <summary>Returns the stream padded to a whole number of 16-bit words with each word byte-swapped (the on-disk order).</summary>
+    public byte[] ToPacket()
+    {
+        var list = new List<byte>(_bytes);
+        if (_n != 0) list.Add((byte)(_cur << (8 - _n)));
+        if ((list.Count & 1) != 0) list.Add(0);
+        var a = list.ToArray();
+        for (int i = 0; i < a.Length; i += 2) (a[i], a[i + 1]) = (a[i + 1], a[i]);
+        return a;
     }
 }

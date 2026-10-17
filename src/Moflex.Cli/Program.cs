@@ -19,7 +19,7 @@ internal static class Program
         try
         {
             if (args.Length < 2 || args[0] is "-h" or "--help") { Console.Write(Usage); return args.Length == 0 ? 1 : 0; }
-            var file = MoflexFile.Load(args[1]);
+            var file = args[0] == "enc-test" ? null! : MoflexFile.Load(args[1]);
             switch (args[0])
             {
                 case "info": Info(file); return 0;
@@ -58,6 +58,27 @@ internal static class Program
                         var fr = dec.Decode(p.Data);
                         o.Write(fr.Y); o.Write(fr.U); o.Write(fr.V);
                     }
+                    return 0;
+                }
+                case "enc-test": // moflex enc-test <raw.yuv> <w> <h> <frames> <q>
+                {
+                    int w = int.Parse(args[2]), h = int.Parse(args[3]), cnt = int.Parse(args[4]), q = int.Parse(args[5]);
+                    int fs = w * h * 3 / 2;
+                    var all = File.ReadAllBytes(args[1]);
+                    var enc = new Moflex.Core.Video.MobiclipEncoder(w, h, q);
+                    var dec = new Moflex.Core.Video.MobiclipDecoder(w, h);
+                    long total = 0; double psnrSum = 0; bool match = true;
+                    for (int i = 0; i < cnt; i++)
+                    {
+                        var f = new Moflex.Core.Video.YuvFrame { Width = w, Height = h, Y = all[(i * fs)..(i * fs + w * h)], U = all[(i * fs + w * h)..(i * fs + w * h * 5 / 4)], V = all[(i * fs + w * h * 5 / 4)..((i + 1) * fs)] };
+                        var pkt = enc.EncodeKeyFrame(f, out var rec);
+                        var d = dec.Decode(pkt);
+                        if (!d.Y.SequenceEqual(rec.Y) || !d.U.SequenceEqual(rec.U) || !d.V.SequenceEqual(rec.V)) match = false;
+                        double se = 0; for (int k = 0; k < w * h; k++) { int e = f.Y[k] - d.Y[k]; se += e * e; }
+                        psnrSum += 10 * Math.Log10(255.0 * 255 * w * h / Math.Max(se, 1));
+                        total += pkt.Length;
+                    }
+                    Console.WriteLine($"frames={cnt} avgBytes={total / cnt} avgLumaPSNR={psnrSum / cnt:F2} decoderMatchesEncoderRecon={match}");
                     return 0;
                 }
                 case "remux-check":

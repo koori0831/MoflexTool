@@ -17,7 +17,7 @@ public sealed class MobiclipDecoder
         35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     };
 
-    private static readonly Vlc[] RlVlc = new Vlc[2];
+    internal static readonly Vlc[] RlVlc = new Vlc[2];
     private static readonly Vlc[][] MvVlc = { new Vlc[16], new Vlc[16] };
 
     static MobiclipDecoder()
@@ -58,6 +58,13 @@ public sealed class MobiclipDecoder
             _pic[i] = new[] { new byte[width * height], new byte[width * height / 4], new byte[width * height / 4] };
         _motion = new (int, int)[width / 16 + 3];
     }
+
+    // --- hooks used by the encoder (closed-loop reconstruction) ---
+    internal byte[][] CurrentFrame => _pic[_cur];
+    internal void AdvanceFrame() => _cur = (_cur + 1) % 6;
+    internal int[] QuantTable(int size) => _qtab[size == 8 ? 1 : 0];
+    internal static byte[] ZigzagFor(int size) => size == 8 ? Zigzag8 : MobiclipTables.Zigzag4x4Tab;
+    internal void SetMoflex(bool v) => _moflex = v;
 
     private int PlaneW(int p) => p == 0 ? _w : _w >> 1;
     private int PlaneH(int p) => p == 0 ? _h : _h >> 1;
@@ -122,7 +129,7 @@ public sealed class MobiclipDecoder
 
     private static int Med(int a, int b, int c) => Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
 
-    private void SetupQ(long q)
+    internal void SetupQ(long q)
     {
         if (q < 12 || q > 161) throw new InvalidDataException("Quantizer out of range.");
         _quantizer = (int)q;
@@ -140,7 +147,7 @@ public sealed class MobiclipDecoder
         r[0] = a + c; r[1] = b + d; r[2] = b - d; r[3] = a - c;
     }
 
-    private static void Idct(Span<int> arr, int size)
+    internal static void Idct(Span<int> arr, int size)
     {
         if (size == 4) { Inverse4(arr); return; }
         Span<int> t = stackalloc int[4];
@@ -200,6 +207,12 @@ public sealed class MobiclipDecoder
             mat[zt[pos]] = qtab[pos] * level;
             if (last) break;
         }
+        Reconstruct(mat, dst, stride, bx, by, size);
+    }
+
+    /// <summary>Inverse-transforms dequantised coefficients (row-major, zigzag already undone) and adds them to the picture.</summary>
+    internal static void Reconstruct(Span<int> mat, byte[] dst, int stride, int bx, int by, int size)
+    {
         mat[0] += 32;
         for (int y = 0; y < size; y++) Idct(mat.Slice(y * size, size), size);
         int o = by * stride + bx;
@@ -296,7 +309,7 @@ public sealed class MobiclipDecoder
         return s;
     }
 
-    private void PredictIntra(byte[][] frame, int ax, int ay, int pmode, bool addCoeffs, int size, int plane)
+    internal void PredictIntra(byte[][] frame, int ax, int ay, int pmode, bool addCoeffs, int size, int plane)
     {
         var buf = frame[plane];
         int stride = PlaneW(plane);
