@@ -23,7 +23,8 @@ and mod projects can replace in-game movies with ordinary video files.
 | In-game | A re-encoded 42 s cut-scene played to the end in the Azahar emulator inside *Digimon World Re:Digitize Decode* |
 
 Not yet supported: FastAudio (audio codec 0), DS `.mods` / Wii `.mo`. Encoding speed is modest
-(about 8 frames/s at 400×240 on one CPU core), and it has not been tested on real 3DS hardware yet.
+(about 50 frames/s at 400×240 per CPU core, with key-frame segments encoded on all cores in parallel;
+`--threads N` limits that), and it has not been tested on real 3DS hardware yet.
 
 ## Build
 
