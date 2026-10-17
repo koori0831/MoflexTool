@@ -148,8 +148,11 @@ public static class MovieEncoder
             {
                 // Packet boundaries follow the video time stamps: one packet per stamp group, rounded to 256-sample sub-frames.
                 double perGroup = o.SampleRate * (double)group * o.FrameDurNum / o.FrameDurDen;
-                int padded = (total + 255) / 256 * 256;
-                var src = pcm.Select(c => { var a = new short[padded]; Array.Copy(c, a, total); return a; }).ToArray();
+                // The original movies carry exactly one audio packet per video stamp group, so the audio ends with
+                // the video (cut or padded with silence) instead of running past the last frame.
+                long groups = (totalFrames + group - 1) / group;
+                int padded = (int)Math.Floor(groups * perGroup / 256 + 0.5) * 256;
+                var src = pcm.Select(c => { var a = new short[padded]; Array.Copy(c, a, Math.Min(total, padded)); return a; }).ToArray();
                 var st = new ImaMoflex.State[o.Channels];
                 var fast = o.Audio == AudioFormat.FastAudio ? new FastAudioEncoder(o.Channels) : null;
                 int off = 0;
