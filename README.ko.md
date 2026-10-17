@@ -11,6 +11,11 @@
 * **CLI** (`moflex`): 사람과 AI·자동화 도구가 스크립트로 쓰기 좋은 명령
 * **GUI** (`MoflexTool`, Avalonia): 몇 번의 클릭으로 정보 확인·추출·인코딩
 
+## 다운로드
+
+바로 실행할 수 있는 Windows용 CLI와 GUI는 [Releases](https://github.com/koori0831/MoflexTool/releases) 페이지에
+있습니다. 자체 포함(self-contained) 빌드라서 .NET을 따로 설치할 필요가 없습니다.
+
 ## 지원 현황
 
 | | 상태 |
@@ -19,13 +24,16 @@
 | 컨테이너 쓰기 | `remux`로 모든 샘플 파일을 **바이트 단위로 동일하게** 재생성 (sync 블록, 탐색 테이블, 타임스탬프, 인터리빙) |
 | 영상 디코딩 | 시험한 샘플 파일에서 FFmpeg 출력과 완전히 동일 (I/P 프레임) |
 | 영상 인코딩 | 키프레임과 예측 프레임(반화소 움직임 탐색, 다중 참조, 인트라 대체), 2D 및 입체 3D(좌우 프레임 교차) |
-| 오디오 | IMA-ADPCM(MOFLEX 변형)·FastAudio 디코딩(FFmpeg와 비트 단위 일치)·인코딩, 16비트 PCM |
-| 인게임 | *디지몬 월드 리:디지타이즈 디코드*에서 재인코딩한 42초 컷신이 Azahar 에뮬레이터에서 끝까지 재생됨 |
+| 오디오 | IMA-ADPCM(MOFLEX 변형)·FastAudio 디코딩(FFmpeg와 비트 단위 일치)·인코딩, 16비트 PCM. 인코딩한 오디오는 영상 길이에 맞춰 자르거나 채움 |
+| 인게임 | *디지몬 월드 리:디지타이즈 디코드*에서 재인코딩한 42초 컷신이 실제 구형 3DS(3D 켬)와 Azahar 에뮬레이터에서 끝까지 재생됨 |
 
 아직 미지원: DS `.mods` / Wii `.mo`. FastAudio는 FFmpeg와만 대조했고, 원본 FastAudio 영상이나 게임에서는
-시험하지 않았습니다. 인코딩 속도는 400×240 기준
-CPU 코어 1개당 초당 약 50프레임이고 키프레임 구간을 모든 코어에서 병렬로 인코딩하며(`--threads N`으로 제한),
-실제 3DS 기기에서는 아직 시험하지 않았습니다.
+시험하지 않았습니다. 인코딩 속도는 400×240 기준 CPU 코어 1개당 초당 약 50프레임이고, 키프레임 구간을
+모든 코어에서 병렬로 인코딩합니다(`--threads N`으로 제한).
+
+에뮬레이터는 실기보다 관대합니다. 오디오가 마지막 영상 프레임보다 패킷 하나 길었을 때 Azahar에서는 문제없이
+재생됐지만 실제 3DS에서는 게임의 디코더가 멈췄습니다. 이제 `encode`는 항상 오디오를 영상 길이에 맞추지만,
+가능하면 실기에서도 시험해 보세요.
 
 ## 빌드
 
@@ -45,14 +53,14 @@ mp4, mkv 같은 일반 영상을 인코딩하려면 [FFmpeg](https://ffmpeg.org/
 
 ```bash
 moflex info movie.moflex                       # 스트림, 프레임 레이트, 3D 레이아웃(진짜 3D인지 포함), 크기
-moflex export-video movie.moflex movie.avi     # 소리까지 담긴 무손실 영상 파일 하나 (바로 편집 가능)
+moflex export-video movie.moflex movie.avi     # 소리까지 담긴 무손실 영상 파일 하나 (바로 편집 가능, .avi/.mov/.mkv)
 moflex export-audio movie.moflex movie.wav     # 오디오만 디코딩
 moflex export-video movie.moflex movie.yuv     # 영상만 디코딩 (raw yuv420p, 저장된 모든 프레임)
 moflex verify movie.moflex                     # 먹서가 파일을 똑같이 재현하는지, 모든 프레임이 디코딩되는지
 moflex remux movie.moflex rebuilt.moflex       # 먹서로 파일 재구성
 ```
 
-`.avi`나 `.mov`로 `export-video`를 하면 내장 디코더로 화면을 디코딩해 무손실로 저장합니다(기본 Ut Video,
+`.avi`, `.mov`, `.mkv`로 `export-video`를 하면 내장 디코더로 화면을 디코딩해 무손실로 저장합니다(기본 Ut Video,
 `--codec ffv1|magicyuv|rawvideo`로 변경 가능). 소리는 16비트 PCM이고, FFmpeg는 컨테이너를 쓰는 데만 쓰입니다.
 진짜 3D 영상은 좌우 나란히(SBS) 한 화면(왼쪽 절반 = 왼쪽 눈)이 됩니다. 3D 레이아웃이지만 양쪽 눈이 끝까지 같은
 화면이면 일반 2D(한쪽 눈)로 내보냅니다. `--eye sbs|left|right`로 직접 정할 수 있습니다.
@@ -78,7 +86,7 @@ moflex encode edited.mp4 -o inGame1.moflex --like original/inGame1.moflex -q 18 
 ## GUI
 
 `MoflexTool`은 두 개의 탭으로 되어 있습니다.
-**Inspect / Export**(`.moflex` 열기, 소리 포함 재생·일시정지·탐색 미리보기, 진짜 3D 판별, 무손실 AVI/MOV 또는 WAV/YUV 추출, 검증)와
+**Inspect / Export**(`.moflex` 열기, 소리 포함 재생·일시정지·탐색 미리보기, 진짜 3D 판별, 무손실 AVI/MOV/MKV 또는 WAV + YUV 따로 추출, 검증)와
 **Encode**(입력 영상, 기준 영상(선택), 화질, SBS 옵션, 진행률).
 
 ## 개발 방식

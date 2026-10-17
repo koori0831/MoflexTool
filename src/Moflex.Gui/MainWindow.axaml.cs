@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private static readonly FilePickerFileType MoflexType = new("MOFLEX video") { Patterns = new[] { "*.moflex" } };
     private static readonly FilePickerFileType AviType = new("AVI video") { Patterns = new[] { "*.avi" } };
     private static readonly FilePickerFileType MovType = new("QuickTime video") { Patterns = new[] { "*.mov" } };
+    private static readonly FilePickerFileType MkvType = new("Matroska video") { Patterns = new[] { "*.mkv" } };
 
     public MainWindow()
     {
@@ -112,7 +113,7 @@ public partial class MainWindow : Window
     private async void OnExportFile(object? sender, RoutedEventArgs e)
     {
         if (_file == null || _path == null) return;
-        var target = await PickSave("Export video (lossless)", Path.GetFileNameWithoutExtension(_path) + ".avi", "avi", AviType, MovType);
+        var target = await PickSave("Export video (lossless)", Path.GetFileNameWithoutExtension(_path) + ".avi", "avi", AviType, MovType, MkvType);
         if (target == null) return;
         var job = new VideoExport
         {

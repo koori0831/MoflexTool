@@ -11,6 +11,11 @@ and mod projects can replace in-game movies with ordinary video files.
 * **CLI** (`moflex`): scriptable commands for people and for AI/automation tools.
 * **GUI** (`MoflexTool`, Avalonia): inspect / export / encode with a few clicks.
 
+## Download
+
+Ready-to-run Windows builds of the CLI and the GUI are on the
+[Releases](https://github.com/koori0831/MoflexTool/releases) page. They are self-contained, so no .NET install is needed.
+
 ## What works
 
 | | Status |
@@ -19,13 +24,16 @@ and mod projects can replace in-game movies with ordinary video files.
 | Container writing | `remux` rebuilds every sample file **byte for byte** (sync blocks, seek table, time stamps, interleaving) |
 | Video decoding | Output identical to FFmpeg on the tested sample files (I and P frames) |
 | Video encoding | Key frames and predicted frames (half-pel motion, multi-reference, intra fallback); 2D and stereoscopic 3D (interleaved left/right) |
-| Audio | IMA-ADPCM (MOFLEX variant) and FastAudio decode, bit-exact with FFmpeg; encode both; 16-bit PCM |
-| In-game | A re-encoded 42 s cut-scene played to the end in the Azahar emulator inside *Digimon World Re:Digitize Decode* |
+| Audio | IMA-ADPCM (MOFLEX variant) and FastAudio decode, bit-exact with FFmpeg; encode both; 16-bit PCM. Encoded audio is cut or padded to the video length |
+| In-game | A re-encoded 42 s cut-scene plays to the end inside *Digimon World Re:Digitize Decode* on a real Old 3DS (3D on) and in the Azahar emulator |
 
 Not yet supported: DS `.mods` / Wii `.mo`. FastAudio has only been checked against FFmpeg, not against original
-FastAudio movies or in a game. Encoding speed is modest
-(about 50 frames/s at 400×240 per CPU core, with key-frame segments encoded on all cores in parallel;
-`--threads N` limits that), and it has not been tested on real 3DS hardware yet.
+FastAudio movies or in a game. Encoding runs at about 50 frames/s at 400×240 per CPU core, with key-frame segments
+encoded on all cores in parallel (`--threads N` limits that).
+
+Emulators are more forgiving than the console: audio that ran one packet past the last video frame played fine in
+Azahar but crashed the game's decoder on a real 3DS. `encode` now always trims or pads the audio to the video, so
+test on hardware when you can.
 
 ## Build
 
@@ -45,14 +53,14 @@ FFmpeg is only used as an external program to decode and scale the input.
 
 ```bash
 moflex info movie.moflex                       # streams, frame rate, 3D layout (real 3D or flat), sizes
-moflex export-video movie.moflex movie.avi     # one lossless video file with sound, ready to edit
+moflex export-video movie.moflex movie.avi     # one lossless video file with sound, ready to edit (.avi/.mov/.mkv)
 moflex export-audio movie.moflex movie.wav     # decode audio only
 moflex export-video movie.moflex movie.yuv     # decode video only (raw yuv420p, every stored frame)
 moflex verify movie.moflex                     # muxer reproduces the file? all frames decode?
 moflex remux movie.moflex rebuilt.moflex       # rebuild the file with the muxer
 ```
 
-`export-video` to `.avi` or `.mov` decodes the picture with the built-in decoder and stores it losslessly
+`export-video` to `.avi`, `.mov` or `.mkv` decodes the picture with the built-in decoder and stores it losslessly
 (Ut Video by default, `--codec ffv1|magicyuv|rawvideo` for others) with 16-bit PCM sound; FFmpeg only writes the
 container. A real 3D movie becomes one side-by-side picture (left half = left eye). A movie stored in 3D layout whose eyes
 show the same picture everywhere is exported as ordinary 2D (one eye); `--eye sbs|left|right` overrides this.
@@ -78,7 +86,7 @@ Without a reference: `moflex encode in.mp4 -o out.moflex --size 400x240 --fps 30
 ## GUI
 
 `MoflexTool` has two tabs:
-**Inspect / Export** (open a `.moflex`, preview it with sound and play/pause/seek, tell real 3D from flat 3D, export a lossless AVI/MOV or WAV/YUV, verify) and
+**Inspect / Export** (open a `.moflex`, preview it with sound and play/pause/seek, tell real 3D from flat 3D, export a lossless AVI/MOV/MKV or separate WAV + YUV, verify) and
 **Encode** (input video, optional reference movie, quality, side-by-side option, progress).
 
 ## How it was built
