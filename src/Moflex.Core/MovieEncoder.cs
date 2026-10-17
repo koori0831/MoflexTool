@@ -4,7 +4,7 @@ using Moflex.Core.Video;
 
 namespace Moflex.Core;
 
-public enum AudioFormat { None, ImaAdpcm, Pcm16 }
+public enum AudioFormat { None, ImaAdpcm, Pcm16, FastAudio }
 
 /// <summary>How video frames map to eyes.</summary>
 public enum StereoMode
@@ -71,7 +71,7 @@ public static class MovieEncoder
         if (audio)
             streams.Add(new StreamInfo
             {
-                Index = 1, Kind = StreamKind.Audio, DescriptorType = 2, CodecId = o.Audio == AudioFormat.ImaAdpcm ? 1 : 2,
+                Index = 1, Kind = StreamKind.Audio, DescriptorType = 2, CodecId = o.Audio switch { AudioFormat.FastAudio => 0, AudioFormat.ImaAdpcm => 1, _ => 2 },
                 SampleRate = o.SampleRate, Channels = o.Channels, Reserved = Array.Empty<byte>(),
             });
         if (o.SeekTable)
@@ -144,13 +144,14 @@ public static class MovieEncoder
         {
             int total = pcm![0].Length;
             int audioStream = 1;
-            if (o.Audio == AudioFormat.ImaAdpcm)
+            if (o.Audio is AudioFormat.ImaAdpcm or AudioFormat.FastAudio)
             {
                 // Packet boundaries follow the video time stamps: one packet per stamp group, rounded to 256-sample sub-frames.
                 double perGroup = o.SampleRate * (double)group * o.FrameDurNum / o.FrameDurDen;
                 int padded = (total + 255) / 256 * 256;
                 var src = pcm.Select(c => { var a = new short[padded]; Array.Copy(c, a, total); return a; }).ToArray();
                 var st = new ImaMoflex.State[o.Channels];
+                var fast = o.Audio == AudioFormat.FastAudio ? new FastAudioEncoder(o.Channels) : null;
                 int off = 0;
                 for (int i = 1; off < padded; i++)
                 {
@@ -159,7 +160,7 @@ public static class MovieEncoder
                     if (end > padded || padded - end < 256) end = padded;
                     packets.Add(new MuxPacket
                     {
-                        StreamIndex = audioStream, Data = ImaMoflex.EncodePacket(src, off, end - off, st, off == 0),
+                        StreamIndex = audioStream, Data = fast?.EncodePacket(src, off, end - off) ?? ImaMoflex.EncodePacket(src, off, end - off, st, off == 0),
                         TimeUs = off * 1000000L / o.SampleRate + 1,
                     });
                     off = end;

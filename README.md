@@ -7,7 +7,7 @@ It decodes, re-encodes and re-muxes MOFLEX files without the proprietary Mobicli
 and mod projects can replace in-game movies with ordinary video files.
 
 * **Library** (`Moflex.Core`, .NET 10): container parser and muxer, Mobiclip video decoder and encoder,
-  IMA-ADPCM audio decoder and encoder.
+  FastAudio and IMA-ADPCM audio decoders and encoders.
 * **CLI** (`moflex`): scriptable commands for people and for AI/automation tools.
 * **GUI** (`MoflexTool`, Avalonia): inspect / export / encode with a few clicks.
 
@@ -19,10 +19,11 @@ and mod projects can replace in-game movies with ordinary video files.
 | Container writing | `remux` rebuilds every sample file **byte for byte** (sync blocks, seek table, time stamps, interleaving) |
 | Video decoding | Output identical to FFmpeg on the tested sample files (I and P frames) |
 | Video encoding | Key frames and predicted frames (half-pel motion, multi-reference, intra fallback); 2D and stereoscopic 3D (interleaved left/right) |
-| Audio | IMA-ADPCM (MOFLEX variant) decode, bit-exact with FFmpeg; encode; 16-bit PCM |
+| Audio | IMA-ADPCM (MOFLEX variant) and FastAudio decode, bit-exact with FFmpeg; encode both; 16-bit PCM |
 | In-game | A re-encoded 42 s cut-scene played to the end in the Azahar emulator inside *Digimon World Re:Digitize Decode* |
 
-Not yet supported: FastAudio (audio codec 0), DS `.mods` / Wii `.mo`. Encoding speed is modest
+Not yet supported: DS `.mods` / Wii `.mo`. FastAudio has only been checked against FFmpeg, not against original
+FastAudio movies or in a game. Encoding speed is modest
 (about 50 frames/s at 400×240 per CPU core, with key-frame segments encoded on all cores in parallel;
 `--threads N` limits that), and it has not been tested on real 3DS hardware yet.
 

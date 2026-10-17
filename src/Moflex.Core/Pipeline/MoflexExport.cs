@@ -7,14 +7,21 @@ namespace Moflex.Core.Pipeline;
 /// <summary>Decodes the streams of a MOFLEX file to plain formats.</summary>
 public static class MoflexExport
 {
-    /// <summary>Decodes the audio stream (IMA-ADPCM or PCM) to a 16-bit WAV file.</summary>
+    /// <summary>Decodes the audio stream (FastAudio, IMA-ADPCM or PCM) to a 16-bit WAV file.</summary>
     public static void WriteWav(MoflexFile file, Stream output)
     {
         var a = file.Streams.FirstOrDefault(x => x.Kind == StreamKind.Audio) ?? throw new InvalidDataException("The file has no audio stream.");
         var pcm = new MemoryStream();
+        var fast = a.CodecId == 0 ? new FastAudioDecoder(a.Channels) : null;
         foreach (var p in file.Packets.Where(p => p.StreamIndex == a.Index))
         {
-            if (a.CodecId == 1)
+            if (fast != null)
+            {
+                var ch = fast.DecodePacket(p.Data);
+                for (int i = 0; i < ch[0].Length; i++)
+                    for (int c = 0; c < a.Channels; c++) { short v = FastAudio.ToPcm16(ch[c][i]); pcm.WriteByte((byte)v); pcm.WriteByte((byte)(v >> 8)); }
+            }
+            else if (a.CodecId == 1)
             {
                 var ch = ImaMoflex.DecodePacket(p.Data, a.Channels);
                 for (int i = 0; i < ch[0].Length; i++)

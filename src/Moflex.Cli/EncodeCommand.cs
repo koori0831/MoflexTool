@@ -31,6 +31,7 @@ internal static class EncodeCommand
                 case "--audio": job.AudioWav = a[++i]; break;
                 case "--no-audio": job.NoAudio = true; break;
                 case "--pcm": job.Pcm16 = true; break;
+                case "--fastaudio": job.FastAudio = true; break;
                 case "--ffmpeg": job.Ffmpeg = a[++i]; break;
                 case "--max-frames": job.MaxFrames = int.Parse(a[++i]); break;
                 case "--threads": job.Threads = int.Parse(a[++i]); break;

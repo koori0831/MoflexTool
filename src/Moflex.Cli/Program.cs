@@ -32,6 +32,7 @@ internal static class Program
           --audio <file.wav>      use this audio instead of the input's audio track
           --no-audio              write no audio stream
           --pcm                   store audio as 16-bit PCM instead of IMA-ADPCM
+          --fastaudio             store audio as FastAudio (smaller, lossy; automatic when --like uses it)
           --rate HZ               audio sample rate (default: from --like, else 47864)
           --max-frames N          encode only the first N input frames
           --threads N             key-frame segments encoded in parallel (default: CPU cores)
