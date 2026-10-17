@@ -45,11 +45,17 @@ FFmpeg is only used as an external program to decode and scale the input.
 
 ```bash
 moflex info movie.moflex                       # streams, frame rate, 3D layout, sizes
-moflex export-audio movie.moflex movie.wav     # decode audio
-moflex export-video movie.moflex movie.yuv     # decode video (raw yuv420p, every stored frame)
+moflex export-video movie.moflex movie.avi     # one lossless video file with sound, ready to edit
+moflex export-audio movie.moflex movie.wav     # decode audio only
+moflex export-video movie.moflex movie.yuv     # decode video only (raw yuv420p, every stored frame)
 moflex verify movie.moflex                     # muxer reproduces the file? all frames decode?
 moflex remux movie.moflex rebuilt.moflex       # rebuild the file with the muxer
 ```
+
+`export-video` to `.avi` or `.mov` decodes the picture with the built-in decoder and stores it losslessly
+(Ut Video by default, `--codec ffv1|magicyuv|rawvideo` for others) with 16-bit PCM sound; FFmpeg only writes the
+container. A 3D movie becomes one side-by-side picture (left half = left eye); `--eye left|right` keeps one eye.
+Encoding such a side-by-side file with `--like` a 3D movie restores the two eyes automatically.
 
 ### Replacing a game movie
 
@@ -61,7 +67,8 @@ moflex encode edited.mp4 -o inGame1.moflex --like original/inGame1.moflex -q 18 
 ```
 
 * A normal 2D video is shown identically to both eyes when the original is 3D.
-* A side-by-side 3D video (left half = left eye) becomes real left/right frames with `--sbs`.
+* A side-by-side 3D video (left half = left eye) becomes real left/right frames with `--sbs`. When the reference
+  is 3D and the input is twice as wide as one eye (like an `export-video` file), this happens automatically.
 * `-q` (key frames, 12–63) and `--pq` (predicted frames, 12–161): lower is better quality and bigger.
 
 Without a reference: `moflex encode in.mp4 -o out.moflex --size 400x240 --fps 30000/1001`
@@ -70,7 +77,7 @@ Without a reference: `moflex encode in.mp4 -o out.moflex --size 400x240 --fps 30
 ## GUI
 
 `MoflexTool` has two tabs:
-**Inspect / Export** (open a `.moflex`, show its streams, export WAV/YUV, verify) and
+**Inspect / Export** (open a `.moflex`, preview it with play/pause/seek, export a lossless AVI/MOV or WAV/YUV, verify) and
 **Encode** (input video, optional reference movie, quality, side-by-side option, progress).
 
 ## How it was built

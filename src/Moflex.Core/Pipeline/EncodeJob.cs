@@ -27,6 +27,11 @@ public sealed class EncodeJob
     public StereoMode? Stereo { get; set; }
     /// <summary>The input is side-by-side 3D (left half = left eye).</summary>
     public bool SideBySide { get; set; }
+    /// <summary>
+    /// When the reference is 3D and the input is twice as wide as one eye (as written by <see cref="VideoExport"/>),
+    /// treat the input as side-by-side even if <see cref="SideBySide"/> is not set.
+    /// </summary>
+    public bool DetectSideBySide { get; set; } = true;
     public int SampleRate { get; set; } = 47864;
     public int Channels { get; set; } = 2;
     public string? AudioWav { get; set; }
@@ -58,6 +63,13 @@ public sealed class EncodeJob
             if (au != null) { rate = au.SampleRate; ch = au.Channels; if (au.CodecId == 0 && !Pcm16) FastAudio = true; }
         }
         bool sbs = SideBySide;
+        if (!sbs && DetectSideBySide && Stereo == null && stereo == StereoMode.Duplicate && w > 0 && h > 0
+            && !Input.EndsWith(".yuv", StringComparison.OrdinalIgnoreCase)
+            && ProbeSize(Ffmpeg, Input) is { } size && LooksSideBySide(size.Width, size.Height, w, h))
+        {
+            sbs = true;
+            Log?.Invoke($"The input is {size.Width}x{size.Height}, two {w}x{h} eyes side by side: encoding it as 3D.");
+        }
         if (sbs) stereo = StereoMode.Interleaved;
         if (w == 0 || h == 0) throw new ArgumentException("A reference file (Like) or the frame size is required.");
         if (storedNum == 0)
@@ -141,6 +153,26 @@ public sealed class EncodeJob
                 yield return f;
             }
         }
+    }
+
+    /// <summary>True when a picture of the given size holds two eyes of eyeW x eyeH side by side (any scale, 1 % tolerance).</summary>
+    public static bool LooksSideBySide(int width, int height, int eyeW, int eyeH) =>
+        width > 0 && height > 0 && Math.Abs((double)width * eyeH - 2.0 * eyeW * height) <= 0.01 * width * eyeH;
+
+    /// <summary>Size of the first video stream of a file, read from FFmpeg's description of it (null if unknown).</summary>
+    public static (int Width, int Height)? ProbeSize(string ffmpeg, string input)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(ffmpeg, $"-hide_banner -i \"{input}\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+            using var p = Process.Start(psi);
+            if (p == null) return null;
+            string text = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            var m = System.Text.RegularExpressions.Regex.Match(text, @"Stream #.*?Video:.*?[, ](\d{2,5})x(\d{2,5})");
+            return m.Success ? (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value)) : null;
+        }
+        catch { return null; }
     }
 
     private static long Gcd(long x, long y) { while (y != 0) (x, y) = (y, x % y); return x == 0 ? 1 : x; }
