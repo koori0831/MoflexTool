@@ -25,6 +25,27 @@ internal static class Program
                 case "info": Info(file); return 0;
                 case "packets": Packets(file); return 0;
                 case "blocks": Blocks(file); return 0;
+                case "audio-wav":
+                {
+                    var a = file.Streams.First(x => x.Kind == StreamKind.Audio);
+                    using var o = File.Create(args[2]);
+                    using var bw = new BinaryWriter(o);
+                    var pcm = new MemoryStream();
+                    foreach (var p in file.Packets.Where(p => p.StreamIndex == a.Index))
+                    {
+                        if (a.CodecId == 1)
+                        {
+                            var ch = Moflex.Core.Audio.ImaMoflex.DecodePacket(p.Data, a.Channels);
+                            for (int i = 0; i < ch[0].Length; i++) for (int c = 0; c < a.Channels; c++) { pcm.WriteByte((byte)ch[c][i]); pcm.WriteByte((byte)(ch[c][i] >> 8)); }
+                        }
+                        else if (a.CodecId == 2) pcm.Write(p.Data);
+                        else throw new NotSupportedException(a.CodecName);
+                    }
+                    bw.Write("RIFF"u8); bw.Write((int)(36 + pcm.Length)); bw.Write("WAVEfmt "u8); bw.Write(16); bw.Write((short)1);
+                    bw.Write((short)a.Channels); bw.Write(a.SampleRate); bw.Write(a.SampleRate * a.Channels * 2); bw.Write((short)(a.Channels * 2)); bw.Write((short)16);
+                    bw.Write("data"u8); bw.Write((int)pcm.Length); pcm.WriteTo(o);
+                    return 0;
+                }
                 case "remux-check":
                 {
                     var orig = File.ReadAllBytes(args[1]);
