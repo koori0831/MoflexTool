@@ -12,6 +12,7 @@ internal static class EncodeCommand
         string? wav = null;
         int w = 0, h = 0, q = 30, fn = 1001, fd = 30000;
         bool noAudio = false, pcm16 = false;
+        int pq = 32, gop = 240;
         for (int i = 2; i < a.Length; i++)
             switch (a[i])
             {
@@ -22,6 +23,8 @@ internal static class EncodeCommand
                 case "--audio": wav = a[++i]; break;
                 case "--no-audio": noAudio = true; break;
                 case "--pcm": pcm16 = true; break;
+                case "--pq": pq = int.Parse(a[++i]); break;
+                case "--gop": gop = int.Parse(a[++i]); break;
                 case "--ffmpeg": ffmpeg = a[++i]; break;
             }
         if (w == 0 || h == 0) throw new ArgumentException("--size WxH is required.");
@@ -56,7 +59,7 @@ internal static class EncodeCommand
             }
             var opt = new MovieEncodeOptions
             {
-                Width = w, Height = h, FrameDurNum = fn, FrameDurDen = fd, Quantizer = q,
+                Width = w, Height = h, FrameDurNum = fn, FrameDurDen = fd, Quantizer = q, PredictedQuantizer = pq, MaxKeyInterval = gop,
                 Audio = pcm == null ? AudioFormat.None : pcm16 ? AudioFormat.Pcm16 : AudioFormat.ImaAdpcm,
                 SampleRate = rate, Channels = ch,
             };

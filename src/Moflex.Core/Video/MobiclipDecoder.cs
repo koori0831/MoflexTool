@@ -18,7 +18,7 @@ public sealed class MobiclipDecoder
     };
 
     internal static readonly Vlc[] RlVlc = new Vlc[2];
-    private static readonly Vlc[][] MvVlc = { new Vlc[16], new Vlc[16] };
+    internal static readonly Vlc[][] MvVlc = { new Vlc[16], new Vlc[16] };
 
     static MobiclipDecoder()
     {
@@ -65,6 +65,7 @@ public sealed class MobiclipDecoder
     internal int[] QuantTable(int size) => _qtab[size == 8 ? 1 : 0];
     internal static byte[] ZigzagFor(int size) => size == 8 ? Zigzag8 : MobiclipTables.Zigzag4x4Tab;
     internal void SetMoflex(bool v) => _moflex = v;
+    internal void SetDctTable(int t) => _dctTab = t;
 
     private int PlaneW(int p) => p == 0 ? _w : _w >> 1;
     private int PlaneH(int p) => p == 0 ? _h : _h >> 1;
@@ -452,39 +453,7 @@ public sealed class MobiclipDecoder
             var mv = _motion[0];
             if (index > 0) { mv.x += _br.SE(); mv.y += _br.SE(); }
             _motion[offsetm] = mv;
-            int fw = _w, fh = _h;
-            for (int i = 0; i < 3; i++)
-            {
-                if (i == 1)
-                {
-                    offsetx >>= 1; offsety >>= 1; mv.x >>= 1; mv.y >>= 1;
-                    width >>= 1; height >>= 1; fw >>= 1; fh >>= 1;
-                }
-                int method = (mv.x & 1) | ((mv.y & 1) << 1);
-                var srcB = _pic[sidx][i];
-                var dstB = _pic[_cur][i];
-                int stride = fw;
-                if (offsetx + (mv.x >> 1) < 0 || offsety + (mv.y >> 1) < 0 ||
-                    offsetx + width + ((mv.x + 1) >> 1) > fw || offsety + height + ((mv.y + 1) >> 1) > fh)
-                    throw new InvalidDataException("Motion vector out of range.");
-                int src = offsetx + (mv.x >> 1) + (offsety + (mv.y >> 1)) * stride;
-                int dst = offsetx + offsety * stride;
-                for (int y = 0; y < height; y++)
-                {
-                    for (int x = 0; x < width; x++)
-                    {
-                        int s = src + x;
-                        dstB[dst + x] = method switch
-                        {
-                            0 => srcB[s],
-                            1 => (byte)((srcB[s] >> 1) + (srcB[s + 1] >> 1)),
-                            2 => (byte)((srcB[s] >> 1) + (srcB[s + stride] >> 1)),
-                            _ => (byte)((((srcB[s] >> 1) + (srcB[s + 1] >> 1)) >> 1) + (((srcB[s + stride] >> 1) + (srcB[s + 1 + stride] >> 1)) >> 1)),
-                        };
-                    }
-                    dst += stride; src += stride;
-                }
-            }
+            MotionCompensate(sidx, mv.x, mv.y, width, height, offsetx, offsety);
         }
         else
         {
@@ -499,4 +468,60 @@ public sealed class MobiclipDecoder
             }
         }
     }
+
+    /// <summary>Copies a motion-compensated block (half-pel bilinear) from picture <paramref name="sidx"/> into the current picture.</summary>
+    internal void MotionCompensate(int sidx, int mvx, int mvy, int width, int height, int offsetx, int offsety)
+    {
+        var mv = (x: mvx, y: mvy);
+        int fw = _w, fh = _h;
+        for (int i = 0; i < 3; i++)
+        {
+            if (i == 1)
+            {
+                offsetx >>= 1; offsety >>= 1; mv.x >>= 1; mv.y >>= 1;
+                width >>= 1; height >>= 1; fw >>= 1; fh >>= 1;
+            }
+            int method = (mv.x & 1) | ((mv.y & 1) << 1);
+            var srcB = _pic[sidx][i];
+            var dstB = _pic[_cur][i];
+            int stride = fw;
+            if (offsetx + (mv.x >> 1) < 0 || offsety + (mv.y >> 1) < 0 ||
+                offsetx + width + ((mv.x + 1) >> 1) > fw || offsety + height + ((mv.y + 1) >> 1) > fh)
+                throw new InvalidDataException("Motion vector out of range.");
+            int src = offsetx + (mv.x >> 1) + (offsety + (mv.y >> 1)) * stride;
+            int dst = offsetx + offsety * stride;
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    int s0 = src + x;
+                    dstB[dst + x] = method switch
+                    {
+                        0 => srcB[s0],
+                        1 => (byte)((srcB[s0] >> 1) + (srcB[s0 + 1] >> 1)),
+                        2 => (byte)((srcB[s0] >> 1) + (srcB[s0 + stride] >> 1)),
+                        _ => (byte)((((srcB[s0] >> 1) + (srcB[s0 + 1] >> 1)) >> 1) + (((srcB[s0 + stride] >> 1) + (srcB[s0 + 1 + stride] >> 1)) >> 1)),
+                    };
+                }
+                dst += stride; src += stride;
+            }
+        }
+    }
+
+    /// <summary>True when the motion vector (half-pel units) keeps the whole block inside the reference picture.</summary>
+    internal bool MvInRange(int mvx, int mvy, int width, int height, int offsetx, int offsety)
+    {
+        int fw = _w, fh = _h;
+        for (int i = 0; i < 3; i++)
+        {
+            if (i == 1) { offsetx >>= 1; offsety >>= 1; mvx >>= 1; mvy >>= 1; width >>= 1; height >>= 1; fw >>= 1; fh >>= 1; }
+            if (offsetx + (mvx >> 1) < 0 || offsety + (mvy >> 1) < 0 ||
+                offsetx + width + ((mvx + 1) >> 1) > fw || offsety + height + ((mvy + 1) >> 1) > fh) return false;
+        }
+        return true;
+    }
+
+    internal int Quantizer => _quantizer;
+    internal int RingIndex(int back) => ((_cur - back) % 6 + 6) % 6;
+    internal byte[][] RefFrame(int back) => _pic[((_cur - back) % 6 + 6) % 6];
 }

@@ -72,7 +72,9 @@ internal static class Program
                     for (int i = 0; i < cnt; i++)
                     {
                         var f = new Moflex.Core.Video.YuvFrame { Width = w, Height = h, Y = all[(i * fs)..(i * fs + w * h)], U = all[(i * fs + w * h)..(i * fs + w * h * 5 / 4)], V = all[(i * fs + w * h * 5 / 4)..((i + 1) * fs)] };
-                        var pkt = enc.EncodeKeyFrame(f, out var rec);
+                        Moflex.Core.Video.YuvFrame rec;
+                        int gop = args.Length > 6 ? int.Parse(args[6]) : 1, pq = args.Length > 7 ? int.Parse(args[7]) : q;
+                        var pkt = i % gop == 0 ? enc.EncodeKeyFrame(f, out rec) : enc.EncodePredictedFrame(f, pq, out rec);
                         var d = dec.Decode(pkt);
                         if (!d.Y.SequenceEqual(rec.Y) || !d.U.SequenceEqual(rec.U) || !d.V.SequenceEqual(rec.V)) match = false;
                         double se = 0; for (int k = 0; k < w * h; k++) { int e = f.Y[k] - d.Y[k]; se += e * e; }
@@ -100,6 +102,21 @@ internal static class Program
                     var orig = File.ReadAllBytes(args[1]);
                     var w = MoflexWriter.WriteSyncHeader(file.Header);
                     Console.WriteLine(w.AsSpan().SequenceEqual(orig.AsSpan(0, file.Header.Length)) ? "header identical" : "header differs: " + Convert.ToHexString(w) + " vs " + Convert.ToHexString(orig.AsSpan(0, file.Header.Length)));
+                    return 0;
+                }
+                case "vstats":
+                {
+                    var v = file.Streams.First(x => x.Kind == StreamKind.Video);
+                    int n = 0;
+                    foreach (var p in file.Packets.Where(p => p.StreamIndex == v.Index))
+                    {
+                        var d = p.Data;
+                        int Bit(int i) { int by = (i >> 3) ^ 1; return by < d.Length ? (d[by] >> (7 - (i & 7))) & 1 : 0; }
+                        int Bits(int s, int c) { int r = 0; for (int k = 0; k < c; k++) r = (r << 1) | Bit(s + k); return r; }
+                        if (Bit(0) == 1) Console.WriteLine($"{n},I,moflex={Bit(1)},dct={Bit(2)},q={Bits(3, 6)},size={d.Length}");
+                        else Console.WriteLine($"{n},P,size={d.Length}");
+                        n++;
+                    }
                     return 0;
                 }
                 case "remux-check":
