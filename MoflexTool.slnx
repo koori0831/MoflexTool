@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Moflex.Cli/Moflex.Cli.csproj" />
+    <Project Path="src/Moflex.Core/Moflex.Core.csproj" />
+    <Project Path="src/Moflex.Gui/Moflex.Gui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Moflex.Tests/Moflex.Tests.csproj" />
+  </Folder>
+</Solution>

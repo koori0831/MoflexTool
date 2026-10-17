@@ -1,0 +1,8 @@
+bin/
+obj/
+.vs/
+*.user
+*.moflex
+*.mp4
+samples/
+TestResults/
