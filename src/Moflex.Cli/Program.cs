@@ -19,6 +19,7 @@ internal static class Program
         try
         {
             if (args.Length < 2 || args[0] is "-h" or "--help") { Console.Write(Usage); return args.Length == 0 ? 1 : 0; }
+            if (args[0] == "encode") return EncodeCommand.Run(args);
             var file = args[0] == "enc-test" ? null! : MoflexFile.Load(args[1]);
             switch (args[0])
             {
@@ -79,6 +80,26 @@ internal static class Program
                         total += pkt.Length;
                     }
                     Console.WriteLine($"frames={cnt} avgBytes={total / cnt} avgLumaPSNR={psnrSum / cnt:F2} decoderMatchesEncoderRecon={match}");
+                    return 0;
+                }
+                case "chunks":
+                    foreach (var c in file.Chunks) Console.WriteLine($"{c.BlockIndex},{file.Blocks[c.BlockIndex].Flags},{c.StreamIndex},{(c.End ? 1 : 0)},{c.PayloadLength}");
+                    return 0;
+                case "remux": // re-layout every packet of a file into a freshly muxed file
+                {
+                    var pk = file.Packets.Select(p => new MuxPacket
+                    {
+                        StreamIndex = p.StreamIndex, Data = p.Data,
+                        TimestampUs = (long)(p.EndInfo?.Value2 ?? 0), Value1 = (int)(p.EndInfo?.Value1 ?? 0), Flag = p.EndInfo?.Flag ?? 0,
+                    }).ToList();
+                    File.WriteAllBytes(args[2], MoflexMuxer.Mux(file.Header, pk));
+                    return 0;
+                }
+                case "hdr-check":
+                {
+                    var orig = File.ReadAllBytes(args[1]);
+                    var w = MoflexWriter.WriteSyncHeader(file.Header);
+                    Console.WriteLine(w.AsSpan().SequenceEqual(orig.AsSpan(0, file.Header.Length)) ? "header identical" : "header differs: " + Convert.ToHexString(w) + " vs " + Convert.ToHexString(orig.AsSpan(0, file.Header.Length)));
                     return 0;
                 }
                 case "remux-check":
