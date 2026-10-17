@@ -39,6 +39,11 @@ public sealed class MobiclipDecoder
         }
     }
 
+    /// <summary>Optional feature-usage counters (diagnostics).</summary>
+    public static Dictionary<string, long>? Stats;
+    private static void St(string k) { if (Stats != null) { Stats.TryGetValue(k, out var v); Stats[k] = v + 1; } }
+    private bool _inP;
+
     private readonly int _w, _h;
     private readonly byte[][][] _pic = new byte[6][][];
     private int _cur;
@@ -88,15 +93,20 @@ public sealed class MobiclipDecoder
             _moflex = _br.Bit() == 1;
             _dctTab = _br.Bit();
             SetupQ(_br.Bits(6));
+            _inP = false; St($"I.q={_quantizer}"); St($"I.dct={_dctTab}"); St($"I.moflex={_moflex}");
             for (int y = 0; y < _h; y += 16)
                 for (int x = 0; x < _w; x += 16)
-                    DecodeMacroblock(frame, x, y, _br.Bit() == 1);
+                {
+                    bool pr = _br.Bit() == 1; St($"I.mb.predict={pr}");
+                    DecodeMacroblock(frame, x, y, pr);
+                }
         }
         else
         {
             Array.Clear(_motion);
             _dctTab = 0;
             SetupQ(_quantizer + _br.SE());
+            _inP = true; St($"P.q={_quantizer}");
             for (int y = 0; y < _h; y += 16)
                 for (int x = 0; x < _w; x += 16)
                 {
@@ -105,11 +115,13 @@ public sealed class MobiclipDecoder
                                   Med(_motion[mx + 1].y, _motion[mx + 2].y, _motion[mx + 3].y));
                     _motion[mx + 2] = (0, 0);
                     int idx = MvVlc[_moflex ? 1 : 0][0].Read(_br);
+                    St($"P.mb={idx}");
                     if (idx == 6 || idx == 7) DecodeMacroblock(frame, x, y, idx == 7);
                     else
                     {
                         PredictMotion(16, 16, idx, mx + 2, x, y);
                         int idx2 = _br.UE();
+                        St($"P.cbp={idx2}");
                         if (idx2 >= 64) throw new InvalidDataException("Bad coefficient flags.");
                         int flags = MobiclipTables.PframeBlock8x8CoefficientsTab[idx2];
                         for (int sy = y; sy < y + 16; sy += 8)
@@ -166,6 +178,7 @@ public sealed class MobiclipDecoder
     private void ReadRun(out bool last, out int run, out int level)
     {
         int n = RlVlc[_dctTab].Read(_br);
+        if (Stats != null && n == 0) St($"rl.sym0.len={RlVlc[_dctTab].LastLen}.tab={_dctTab}");
         last = (n >> 11) == 1; run = (n >> 5) & 0x3F; level = n & 0x1F;
     }
 
@@ -183,18 +196,21 @@ public sealed class MobiclipDecoder
             ReadRun(out last, out run, out level);
             if (level != 0)
             {
+                St("coef.direct");
                 if (_br.Bit() == 1) level = -level;
             }
             else if (_br.Bit() == 0)
             {
                 ReadRun(out last, out run, out level);
                 level += MobiclipTables.RunResidue[_dctTab * 256 + (last ? 64 : 0) + run];
+                St("coef.esc1");
                 if (_br.Bit() == 1) level = -level;
             }
             else if (_br.Bit() == 0)
             {
                 ReadRun(out last, out run, out level);
                 run += MobiclipTables.RunResidue[_dctTab * 256 + 128 + (last ? 64 : 0) + level];
+                St("coef.esc2");
                 if (_br.Bit() == 1) level = -level;
             }
             else
@@ -202,6 +218,7 @@ public sealed class MobiclipDecoder
                 last = _br.Bit() == 1;
                 run = _br.Bits(6);
                 level = _br.SBits(12);
+                St("coef.raw"); St($"coef.raw.absgt255={Math.Abs(level) > 255}");
             }
             pos += run;
             if (pos >= size * size) throw new InvalidDataException("Coefficient position out of range.");
@@ -233,6 +250,7 @@ public sealed class MobiclipDecoder
     private void AddPframeCoefficients(byte[][] frame, int bx, int by, int size, int plane)
     {
         int idx = _br.UE();
+        St($"P.blk8={(idx == 0 ? "8x8" : "4x4")}");
         if (idx == 0) { AddCoefficients(frame, bx, by, size, plane); return; }
         if (idx >= 16) throw new InvalidDataException("Bad P-frame coefficient index.");
         int flags = MobiclipTables.PframeBlock4x4CoefficientsTab[idx];
@@ -372,6 +390,7 @@ public sealed class MobiclipDecoder
         {
             int v = _br.Bits(3);
             val = v + (v >= val ? 1 : 0);
+            St("pred.explicit");
         }
         _pre[index + 4] = (byte)val;
         if (size == 8) _pre[index + 5] = _pre[index + 8] = _pre[index + 9] = (byte)val;
@@ -387,6 +406,7 @@ public sealed class MobiclipDecoder
             return;
         }
         int tmp = _br.UE();
+        St($"{(_inP ? "P" : "I")}.intra.blk={(tmp == 0 ? "8x8" : "4x4")}");
         if (tmp > 16) throw new InvalidDataException("Bad block coefficient index.");
         if (tmp == 0)
         {
@@ -410,6 +430,7 @@ public sealed class MobiclipDecoder
     private void DecodeMacroblock(byte[][] frame, int x, int y, bool predict)
     {
         int idx = _br.UE();
+        St($"{(_inP ? "P" : "I")}.intra.cbpzero={idx == 0}");
         if (idx >= 64) throw new InvalidDataException("Bad macroblock index.");
         int flags = MobiclipTables.Block8x8CoefficientsTab[idx];
         if (predict)
@@ -422,6 +443,7 @@ public sealed class MobiclipDecoder
         else
         {
             int pmode = _br.Bits(3);
+            St($"{(_inP ? "P" : "I")}.luma.pmode={pmode}");
             if (pmode == 2) { PredictIntra(frame, x, y, pmode, false, 16, 0); pmode = 9; }
             ProcessBlock(frame, x, y, pmode, (flags & 1) != 0, 0); flags >>= 1;
             ProcessBlock(frame, x + 8, y, pmode, (flags & 1) != 0, 0); flags >>= 1;
@@ -430,6 +452,7 @@ public sealed class MobiclipDecoder
         }
         int pa = _moflex ? 1 : 2, pb = _moflex ? 2 : 1;
         int pmodeUv = _br.Bits(3);
+        St($"{(_inP ? "P" : "I")}.chroma.pmode={pmodeUv}");
         if (pmodeUv == 2)
         {
             PredictIntra(frame, x >> 1, y >> 1, pmodeUv, false, 8, pa);
@@ -452,6 +475,7 @@ public sealed class MobiclipDecoder
             if (sidx < 0) sidx += 6;
             var mv = _motion[0];
             if (index > 0) { mv.x += _br.SE(); mv.y += _br.SE(); }
+            St($"mv.index={index}"); St($"mv.size={width}x{height}");
             _motion[offsetm] = mv;
             MotionCompensate(sidx, mv.x, mv.y, width, height, offsetx, offsety);
         }

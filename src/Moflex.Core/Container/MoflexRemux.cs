@@ -5,6 +5,13 @@ public static class MoflexRemux
 {
     public static byte[] Rebuild(MoflexFile file, byte[] original)
     {
+        var packets = Packets(file, original, out int frame, out long duration);
+        return MoflexMuxer.Mux(file.Header, packets, new MuxOptions { TotalFrames = frame, DurationUs = duration });
+    }
+
+    /// <summary>Recovers absolute times and sync flags of every audio/video packet.</summary>
+    public static List<MuxPacket> Packets(MoflexFile file, byte[] original, out int frame, out long duration)
+    {
         int videoStream = file.Streams.First(x => x.Kind == StreamKind.Video).Index;
         var syncTimes = new Dictionary<long, long>();
         foreach (var b in file.Blocks.Where(b => b.HeaderLength > 0))
@@ -14,7 +21,8 @@ public static class MoflexRemux
             syncTimes[b.Offset] = (long)ts;
         }
         long segT = 1;
-        int frame = 0, lastBlock = -1;
+        int lastBlock = -1;
+        frame = 0;
         var packets = new List<MuxPacket>();
         foreach (var p in file.Packets)
         {
@@ -30,7 +38,7 @@ public static class MoflexRemux
             if (video) frame++;
         }
         var table = file.Packets.FirstOrDefault(x => file.Streams.First(y => y.Index == x.StreamIndex).Kind == StreamKind.Data);
-        long duration = table != null ? BitConverter.ToUInt32(table.Data, 8) : 0;
-        return MoflexMuxer.Mux(file.Header, packets, new MuxOptions { TotalFrames = frame, DurationUs = duration });
+        duration = table != null ? BitConverter.ToUInt32(table.Data, 8) : 0;
+        return packets;
     }
 }

@@ -45,6 +45,7 @@ internal sealed class Vlc
     private readonly int[] _sym;
     private readonly byte[] _len;
     public readonly Dictionary<int, (uint Code, int Len)> Codes = new();
+    public int LastLen;
 
     public Vlc(ReadOnlySpan<byte> lens, ReadOnlySpan<int> syms)
     {
@@ -58,7 +59,9 @@ internal sealed class Vlc
             int l = lens[i];
             if (code >> 32 != 0) throw new InvalidDataException("VLC overflow.");
             int c = (int)(code >> (32 - l));
-            Codes.TryAdd(syms[i], ((uint)c, l));
+            // Some symbols appear twice (the escape symbol 0 has a 9-bit filler code and the 7-bit code real
+            // streams use); always encode with the shortest code.
+            if (!Codes.TryGetValue(syms[i], out var prev) || l < prev.Len) Codes[syms[i]] = ((uint)c, l);
             int lo = c << (_maxLen - l), hi = lo + (1 << (_maxLen - l));
             for (int k = lo; k < hi; k++) { _sym[k] = syms[i]; _len[k] = (byte)l; }
             code += 1UL << (32 - l);
@@ -71,6 +74,7 @@ internal sealed class Vlc
         int l = _len[idx];
         if (l == 0) throw new InvalidDataException("Invalid VLC code.");
         br.Skip(l);
+        LastLen = l;
         return _sym[idx];
     }
 }

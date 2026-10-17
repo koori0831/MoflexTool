@@ -87,3 +87,8 @@ channel (low nibble first), channels in turn inside a sub-frame. Duration = `siz
 
 ## Video packet (Mobiclip)
 The first bit of the packet *after swapping each 16-bit word* is the key-frame flag (not the first payload byte).
+
+## Encoder pitfall: duplicate escape code
+The run/level code tables contain symbol 0 (the escape) twice: a 9-bit filler code and the 7-bit code that
+real streams use. FFmpeg decodes both, but the game's decoder hangs on the 9-bit one, so encoders must emit
+the 7-bit code (found by testing in Azahar; all original streams use only the 7-bit code).

@@ -112,6 +112,28 @@ internal static class Program
                     }
                     return 0;
                 }
+                case "features": // bitstream feature usage counters
+                {
+                    var v = file.Streams.First(x => x.Kind == StreamKind.Video);
+                    Moflex.Core.Video.MobiclipDecoder.Stats = new();
+                    var dec = new Moflex.Core.Video.MobiclipDecoder(v.Width, v.Height);
+                    int max = args.Length > 2 ? int.Parse(args[2]) : int.MaxValue, n = 0, maxPkt = 0;
+                    foreach (var p in file.Packets.Where(p => p.StreamIndex == v.Index)) { if (n++ >= max) break; maxPkt = Math.Max(maxPkt, p.Data.Length); dec.Decode(p.Data); }
+                    foreach (var kv in Moflex.Core.Video.MobiclipDecoder.Stats.OrderBy(k => k.Key, StringComparer.Ordinal)) Console.WriteLine($"{kv.Key}	{kv.Value}");
+                    Console.WriteLine($"maxPacket	{maxPkt}");
+                    return 0;
+                }
+                case "mix": // mix <videoSource> <audioSource> <out>: video packets of one file + audio packets of another
+                {
+                    var fa = MoflexFile.Load(args[2]);
+                    var pv = MoflexRemux.Packets(file, File.ReadAllBytes(args[1]), out int frames, out long dur);
+                    var pa = MoflexRemux.Packets(fa, File.ReadAllBytes(args[2]), out _, out _);
+                    int vIdx = file.Streams.First(x => x.Kind == StreamKind.Video).Index, aIdx = fa.Streams.First(x => x.Kind == StreamKind.Audio).Index;
+                    var all = pv.Where(p => p.StreamIndex == vIdx).Concat(pa.Where(p => p.StreamIndex == aIdx)).ToList();
+                    var hdr = new MoflexHeader { Timestamp = 1, BlockSize = file.Header.BlockSize, Streams = file.Streams.Where(s => s.Kind != StreamKind.Audio).Concat(fa.Streams.Where(s => s.Kind == StreamKind.Audio)).OrderBy(s => s.Index).ToList() };
+                    File.WriteAllBytes(args[3], MoflexMuxer.Mux(hdr, all, new MuxOptions { TotalFrames = frames, DurationUs = dur }));
+                    return 0;
+                }
                 case "remux-check":
                 {
                     var orig = File.ReadAllBytes(args[1]);
