@@ -12,7 +12,7 @@ internal static class Program
         Usage:
           moflex info <file.moflex>                       Streams, frame rate, stereo layout, sizes
           moflex export-audio <file.moflex> <out.wav>     Decode the audio stream to WAV
-          moflex export-video <file.moflex> <out.avi|out.mov> [options]
+          moflex export-video <file.moflex> <out.avi|out.mov|out.mkv> [options]
                                                           Decode to one lossless, editable video file with sound
           moflex export-video <file.moflex> <out.yuv> [--max-frames N]
                                                           Decode the video to raw YUV 4:2:0 (all stored frames)
@@ -21,7 +21,7 @@ internal static class Program
           moflex verify <file.moflex>                     Check that the muxer reproduces the file byte for byte
                                                           and that every video frame decodes
 
-        Export options (.avi / .mov):
+        Export options (.avi / .mov / .mkv):
           --eye auto|sbs|left|right
                                   3D movies: both eyes side by side (re-encodes as 3D) or one eye; auto (default)
                                   picks sbs for real 3D and left when both eyes show the same picture
@@ -84,7 +84,7 @@ internal static class Program
                 case "export-video":
                 {
                     int max = Option(args, "--max-frames") is { } m ? int.Parse(m) : int.MaxValue;
-                    string target = Need(args, 2, "output .avi, .mov or .yuv");
+                    string target = Need(args, 2, "output .avi, .mov, .mkv or .yuv");
                     if (!target.EndsWith(".yuv", StringComparison.OrdinalIgnoreCase)) return ExportVideo(file, target, args, max);
                     using var o = File.Create(target);
                     var v = file.Streams.First(x => x.Kind == StreamKind.Video);
