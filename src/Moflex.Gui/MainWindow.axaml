@@ -1,66 +1,100 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Moflex.Gui.MainWindow"
-        Title="MoflexTool" Width="760" Height="560" MinWidth="560" MinHeight="420">
-  <TabControl Margin="8">
-    <TabItem Header="Inspect / Export">
-      <DockPanel Margin="4">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-          <Button x:Name="OpenButton" Content="Open .moflex..." Click="OnOpen" />
-          <Button x:Name="ExportAudioButton" Content="Export audio (WAV)..." Click="OnExportAudio" IsEnabled="False" />
-          <Button x:Name="ExportVideoButton" Content="Export video (YUV)..." Click="OnExportVideo" IsEnabled="False" />
-          <Button x:Name="VerifyButton" Content="Verify" Click="OnVerify" IsEnabled="False" />
-        </StackPanel>
-        <TextBlock DockPanel.Dock="Top" x:Name="FileLabel" Text="No file opened." Margin="0,0,0,6" />
-        <TextBox x:Name="InfoBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
-                 FontFamily="Consolas, Menlo, monospace" />
-      </DockPanel>
-    </TabItem>
-    <TabItem Header="Encode">
-      <ScrollViewer>
-        <Grid Margin="4" ColumnDefinitions="190,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
-          <TextBlock Grid.Row="0" Text="Input video" VerticalAlignment="Center" />
-          <TextBox Grid.Row="0" Grid.Column="1" x:Name="InputBox" Margin="4" />
-          <Button Grid.Row="0" Grid.Column="2" Content="..." Click="OnPickInput" />
+        Title="MoflexTool" Width="900" Height="760" MinWidth="620" MinHeight="520">
+  <DockPanel Margin="8">
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="4,0,4,4">
+      <TextBlock Text="FFmpeg executable" VerticalAlignment="Center" Margin="0,0,8,0" />
+      <TextBox Grid.Column="1" x:Name="FfmpegBox" Text="ffmpeg" Margin="4" />
+      <Button Grid.Column="2" Content="..." Click="OnPickFfmpeg" />
+    </Grid>
+    <TabControl>
+      <TabItem Header="Inspect / Export">
+        <DockPanel Margin="4">
+          <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+            <Button x:Name="OpenButton" Content="Open .moflex..." Click="OnOpen" Margin="0,0,8,4" />
+            <Button x:Name="ExportFileButton" Content="Export video (AVI/MOV)..." Click="OnExportFile" IsEnabled="False" Margin="0,0,8,4" />
+            <Button x:Name="ExportAudioButton" Content="Export audio (WAV)..." Click="OnExportAudio" IsEnabled="False" Margin="0,0,8,4" />
+            <Button x:Name="ExportVideoButton" Content="Export raw video (YUV)..." Click="OnExportVideo" IsEnabled="False" Margin="0,0,8,4" />
+            <Button x:Name="VerifyButton" Content="Verify" Click="OnVerify" IsEnabled="False" Margin="0,0,8,4" />
+          </WrapPanel>
+          <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+            <TextBlock Text="3D movies" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox x:Name="EyeBox" SelectedIndex="0" Width="150" Margin="0,0,16,0" SelectionChanged="OnEyeChanged">
+              <ComboBoxItem Content="Side by side" />
+              <ComboBoxItem Content="Left eye" />
+              <ComboBoxItem Content="Right eye" />
+            </ComboBox>
+            <TextBlock Text="Lossless codec" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox x:Name="CodecBox" SelectedIndex="0" Width="130" Margin="0,0,16,0">
+              <ComboBoxItem Content="utvideo" />
+              <ComboBoxItem Content="ffv1" />
+              <ComboBoxItem Content="magicyuv" />
+              <ComboBoxItem Content="rawvideo" />
+            </ComboBox>
+            <ProgressBar x:Name="ExportProgress" Minimum="0" Maximum="100" Width="200" VerticalAlignment="Center" />
+          </WrapPanel>
+          <TextBlock DockPanel.Dock="Top" x:Name="FileLabel" Text="No file opened." Margin="0,0,0,2" />
+          <TextBlock DockPanel.Dock="Top" x:Name="StereoLabel" Text="" Margin="0,0,0,6" Opacity="0.8" />
+          <TextBox DockPanel.Dock="Bottom" x:Name="InfoBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                   FontFamily="Consolas, Menlo, monospace" Height="150" Margin="0,6,0,0" />
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,6,0,0">
+            <Button x:Name="PlayButton" Content="Play" Width="70" Click="OnPlayPause" IsEnabled="False" />
+            <Slider Grid.Column="1" x:Name="SeekSlider" Minimum="0" Maximum="0" Margin="8,0" IsEnabled="False"
+                    ValueChanged="OnSeek" />
+            <TextBlock Grid.Column="2" x:Name="TimeLabel" Text="0:00.00 / 0:00.00" VerticalAlignment="Center"
+                       FontFamily="Consolas, Menlo, monospace" />
+            <CheckBox Grid.Column="3" x:Name="SoundBox" Content="Sound" IsChecked="True" Margin="12,0,0,0"
+                      IsCheckedChanged="OnSoundChanged" />
+          </Grid>
+          <Border Background="Black" CornerRadius="4">
+            <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="None" />
+          </Border>
+        </DockPanel>
+      </TabItem>
+      <TabItem Header="Encode">
+        <ScrollViewer>
+          <Grid Margin="4" ColumnDefinitions="190,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
+            <TextBlock Grid.Row="0" Text="Input video" VerticalAlignment="Center" />
+            <TextBox Grid.Row="0" Grid.Column="1" x:Name="InputBox" Margin="4" />
+            <Button Grid.Row="0" Grid.Column="2" Content="..." Click="OnPickInput" />
 
-          <TextBlock Grid.Row="1" Text="Reference .moflex (layout)" VerticalAlignment="Center" />
-          <TextBox Grid.Row="1" Grid.Column="1" x:Name="LikeBox" Margin="4"
-                   PlaceholderText="Original movie: copies size, frame rate, 3D layout, audio format" />
-          <Button Grid.Row="1" Grid.Column="2" Content="..." Click="OnPickLike" />
+            <TextBlock Grid.Row="1" Text="Reference .moflex (layout)" VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" x:Name="LikeBox" Margin="4"
+                     PlaceholderText="Original movie: copies size, frame rate, 3D layout, audio format" />
+            <Button Grid.Row="1" Grid.Column="2" Content="..." Click="OnPickLike" />
 
-          <TextBlock Grid.Row="2" Text="Output .moflex" VerticalAlignment="Center" />
-          <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutputBox" Margin="4" />
-          <Button Grid.Row="2" Grid.Column="2" Content="..." Click="OnPickOutput" />
+            <TextBlock Grid.Row="2" Text="Output .moflex" VerticalAlignment="Center" />
+            <TextBox Grid.Row="2" Grid.Column="1" x:Name="OutputBox" Margin="4" />
+            <Button Grid.Row="2" Grid.Column="2" Content="..." Click="OnPickOutput" />
 
-          <TextBlock Grid.Row="3" Text="Size / fps without reference" VerticalAlignment="Center" />
-          <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="4">
-            <NumericUpDown x:Name="WidthBox" Value="400" Minimum="16" Maximum="1024" Increment="16" FormatString="0" Width="130" />
-            <TextBlock Text="x" VerticalAlignment="Center" />
-            <NumericUpDown x:Name="HeightBox" Value="240" Minimum="16" Maximum="1024" Increment="16" FormatString="0" Width="130" />
-            <TextBox x:Name="FpsBox" Text="30000/1001" Width="110" />
-          </StackPanel>
+            <TextBlock Grid.Row="3" Text="Size / fps without reference" VerticalAlignment="Center" />
+            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="4">
+              <NumericUpDown x:Name="WidthBox" Value="400" Minimum="16" Maximum="1024" Increment="16" FormatString="0" Width="130" />
+              <TextBlock Text="x" VerticalAlignment="Center" />
+              <NumericUpDown x:Name="HeightBox" Value="240" Minimum="16" Maximum="1024" Increment="16" FormatString="0" Width="130" />
+              <TextBox x:Name="FpsBox" Text="30000/1001" Width="110" />
+            </StackPanel>
 
-          <TextBlock Grid.Row="4" Text="Key-frame quality (q)" VerticalAlignment="Center" />
-          <NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="QBox" Value="18" Minimum="12" Maximum="63" FormatString="0" Width="130" HorizontalAlignment="Left" Margin="4" />
+            <TextBlock Grid.Row="4" Text="Key-frame quality (q)" VerticalAlignment="Center" />
+            <NumericUpDown Grid.Row="4" Grid.Column="1" x:Name="QBox" Value="18" Minimum="12" Maximum="63" FormatString="0" Width="130" HorizontalAlignment="Left" Margin="4" />
 
-          <TextBlock Grid.Row="5" Text="Predicted-frame quality (q)" VerticalAlignment="Center" />
-          <NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="PqBox" Value="22" Minimum="12" Maximum="161" FormatString="0" Width="130" HorizontalAlignment="Left" Margin="4" />
+            <TextBlock Grid.Row="5" Text="Predicted-frame quality (q)" VerticalAlignment="Center" />
+            <NumericUpDown Grid.Row="5" Grid.Column="1" x:Name="PqBox" Value="22" Minimum="12" Maximum="161" FormatString="0" Width="130" HorizontalAlignment="Left" Margin="4" />
 
-          <TextBlock Grid.Row="6" Text="Input is side-by-side 3D" VerticalAlignment="Center" />
-          <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SbsBox" Margin="4" />
+            <TextBlock Grid.Row="6" Text="Input is side-by-side 3D" VerticalAlignment="Center" />
+            <CheckBox Grid.Row="6" Grid.Column="1" x:Name="SbsBox" Margin="4"
+                      ToolTip.Tip="Checked automatically when the reference is 3D and the input is twice as wide (e.g. an export from the first tab)" />
 
-          <TextBlock Grid.Row="7" Text="FFmpeg executable" VerticalAlignment="Center" />
-          <TextBox Grid.Row="7" Grid.Column="1" x:Name="FfmpegBox" Text="ffmpeg" Margin="4" />
-          <Button Grid.Row="7" Grid.Column="2" Content="..." Click="OnPickFfmpeg" />
-
-          <StackPanel Grid.Row="8" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="8" Margin="0,8">
-            <Button x:Name="EncodeButton" Content="Encode" Click="OnEncode" />
-            <ProgressBar x:Name="EncodeProgress" Minimum="0" Maximum="100" Width="360" />
-          </StackPanel>
-          <TextBlock Grid.Row="9" Grid.ColumnSpan="3" Text="Lower q = higher quality and bigger files (key frames: 12 is the best)." Opacity="0.7" />
-          <TextBox Grid.Row="10" Grid.ColumnSpan="3" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" MinHeight="120" Margin="0,8,0,0" />
-        </Grid>
-      </ScrollViewer>
-    </TabItem>
-  </TabControl>
+            <StackPanel Grid.Row="7" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="8" Margin="0,8">
+              <Button x:Name="EncodeButton" Content="Encode" Click="OnEncode" />
+              <ProgressBar x:Name="EncodeProgress" Minimum="0" Maximum="100" Width="360" />
+            </StackPanel>
+            <TextBlock Grid.Row="8" Grid.ColumnSpan="3" Text="Lower q = higher quality and bigger files (key frames: 12 is the best)." Opacity="0.7" />
+            <TextBox Grid.Row="9" Grid.ColumnSpan="3" x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" MinHeight="120" Margin="0,8,0,0" />
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
 </Window>

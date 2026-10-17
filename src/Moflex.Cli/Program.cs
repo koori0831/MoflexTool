@@ -12,6 +12,8 @@ internal static class Program
         Usage:
           moflex info <file.moflex>                       Streams, frame rate, stereo layout, sizes
           moflex export-audio <file.moflex> <out.wav>     Decode the audio stream to WAV
+          moflex export-video <file.moflex> <out.avi|out.mov> [options]
+                                                          Decode to one lossless, editable video file with sound
           moflex export-video <file.moflex> <out.yuv> [--max-frames N]
                                                           Decode the video to raw YUV 4:2:0 (all stored frames)
           moflex encode <input> -o <out.moflex> [options] Encode a video file (via FFmpeg) or raw .yuv
@@ -19,13 +21,23 @@ internal static class Program
           moflex verify <file.moflex>                     Check that the muxer reproduces the file byte for byte
                                                           and that every video frame decodes
 
+        Export options (.avi / .mov):
+          --eye auto|sbs|left|right
+                                  3D movies: both eyes side by side (re-encodes as 3D) or one eye; auto (default)
+                                  picks sbs for real 3D and left when both eyes show the same picture
+          --codec C               lossless video codec: utvideo (default), ffv1, magicyuv, rawvideo (.avi only)
+          --no-audio              video only
+          --max-frames N          export only the first N pictures
+          --ffmpeg <path>         FFmpeg executable that writes the file (default: ffmpeg on PATH)
+
         Encode options:
           --like <ref.moflex>     copy size, frame rate, 3D layout and audio format from an existing movie
           --size WxH              frame size (when --like is not used)
           --fps A/B               input frame rate (default: derived from --like, else 30000/1001)
           --stereo none|duplicate|interleaved
                                   2D, same picture for both eyes, or input already alternates L/R frames
-          --sbs                   input is side-by-side 3D (left half = left eye)
+          --sbs                   input is side-by-side 3D (left half = left eye); detected automatically
+                                  when --like is 3D and the input is twice as wide (--stereo duplicate turns that off)
           -q N                    key-frame quantiser 12..63 (lower = better, default 30)
           --pq N                  predicted-frame quantiser 12..161 (default 32)
           --gop N                 maximum distance between key frames (default 240)
@@ -58,7 +70,11 @@ internal static class Program
             var file = MoflexFile.Load(args[1]);
             switch (args[0])
             {
-                case "info": Console.Write(MoflexExport.Describe(file)); return 0;
+                case "info":
+                    Console.Write(MoflexExport.Describe(file));
+                    if (MoflexVideoReader.AnalyzeStereo(file) is { } st)
+                        Console.WriteLine($"3D         : {st} (max difference {st.MaxDifference:0.##})");
+                    return 0;
                 case "export-audio":
                 {
                     using var o = File.Create(Need(args, 2, "output .wav"));
@@ -68,7 +84,9 @@ internal static class Program
                 case "export-video":
                 {
                     int max = Option(args, "--max-frames") is { } m ? int.Parse(m) : int.MaxValue;
-                    using var o = File.Create(Need(args, 2, "output .yuv"));
+                    string target = Need(args, 2, "output .avi, .mov or .yuv");
+                    if (!target.EndsWith(".yuv", StringComparison.OrdinalIgnoreCase)) return ExportVideo(file, target, args, max);
+                    using var o = File.Create(target);
                     var v = file.Streams.First(x => x.Kind == StreamKind.Video);
                     int n = MoflexExport.WriteYuv(file, o, max);
                     Console.WriteLine($"{n} frames, {v.Width}x{v.Height} yuv420p");
@@ -112,6 +130,33 @@ internal static class Program
     {
         int i = Array.IndexOf(a, name);
         return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+    }
+
+    private static int ExportVideo(MoflexFile file, string target, string[] args, int max)
+    {
+        var job = new VideoExport
+        {
+            File = file, Output = target, MaxFrames = max, NoAudio = args.Contains("--no-audio"),
+            Ffmpeg = Option(args, "--ffmpeg") ?? "ffmpeg", Codec = Option(args, "--codec") ?? "utvideo",
+            Eyes = Option(args, "--eye") switch
+            {
+                null or "auto" => null,
+                "sbs" => EyeLayout.SideBySide,
+                "left" => EyeLayout.Left,
+                "right" => EyeLayout.Right,
+                var e => throw new ArgumentException($"Unknown --eye '{e}' (use sbs, left or right)."),
+            },
+            Log = Console.WriteLine,
+        };
+        int lastPct = -1;
+        job.Progress = (n, total) =>
+        {
+            int pct = total > 0 ? (int)(n * 100 / total) : 0;
+            if (pct != lastPct && pct % 5 == 0) { lastPct = pct; Console.Error.Write($"\r{pct,3}% ({n}/{total} pictures)"); }
+            if (n == total) Console.Error.WriteLine();
+        };
+        job.Run();
+        return 0;
     }
 
     private static int Verify(MoflexFile file, byte[] original)
