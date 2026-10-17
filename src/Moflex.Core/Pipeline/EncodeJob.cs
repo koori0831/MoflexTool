@@ -33,6 +33,8 @@ public sealed class EncodeJob
     public bool NoAudio { get; set; }
     public bool Pcm16 { get; set; }
     public int MaxFrames { get; set; } = int.MaxValue;
+    /// <summary>Segments encoded in parallel (0 = one per CPU core).</summary>
+    public int Threads { get; set; }
 
     /// <summary>Called with (frames encoded, total frames).</summary>
     public Action<long, long>? Progress { get; set; }
@@ -100,7 +102,7 @@ public sealed class EncodeJob
             var opt = new MovieEncodeOptions
             {
                 Width = w, Height = h, FrameDurNum = (int)storedNum, FrameDurDen = (int)storedDen,
-                Quantizer = Quantizer, PredictedQuantizer = PredictedQuantizer, MaxKeyInterval = MaxKeyInterval, Stereo = stereo,
+                Quantizer = Quantizer, PredictedQuantizer = PredictedQuantizer, MaxKeyInterval = MaxKeyInterval, Stereo = stereo, Threads = Threads,
                 Audio = pcm == null ? AudioFormat.None : Pcm16 ? AudioFormat.Pcm16 : AudioFormat.ImaAdpcm,
                 SampleRate = rate, Channels = ch,
                 Progress = n => Progress?.Invoke(n, total),

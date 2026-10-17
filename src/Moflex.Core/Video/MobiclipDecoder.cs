@@ -167,16 +167,17 @@ public sealed class MobiclipDecoder
     internal static void Idct(Span<int> arr, int size)
     {
         if (size == 4) { Inverse4(arr); return; }
-        Span<int> t = stackalloc int[4];
-        t[0] = arr[0]; t[1] = arr[2]; t[2] = arr[4]; t[3] = arr[6];
-        Inverse4(t);
+        arr = arr[..8];
+        // even half: Inverse4 of (arr[0], arr[2], arr[4], arr[6])
+        int a = arr[0] + arr[4], b = arr[0] - arr[4], c = arr[2] + (arr[6] >> 1), d = (arr[2] >> 1) - arr[6];
+        int t0 = a + c, t1 = b + d, t2 = b - d, t3 = a - c;
         int e = arr[7] + arr[1] - arr[3] - (arr[3] >> 1);
         int f = arr[7] - arr[1] + arr[5] + (arr[5] >> 1);
         int g = arr[5] - arr[3] - arr[7] - (arr[7] >> 1);
         int h = arr[5] + arr[3] + arr[1] + (arr[1] >> 1);
         int x3 = g + (h >> 2), x2 = e + (f >> 2), x1 = (e >> 2) - f, x0 = h - (g >> 2);
-        arr[0] = t[0] + x0; arr[1] = t[1] + x1; arr[2] = t[2] + x2; arr[3] = t[3] + x3;
-        arr[4] = t[3] - x3; arr[5] = t[2] - x2; arr[6] = t[1] - x1; arr[7] = t[0] - x0;
+        arr[0] = t0 + x0; arr[1] = t1 + x1; arr[2] = t2 + x2; arr[3] = t3 + x3;
+        arr[4] = t3 - x3; arr[5] = t2 - x2; arr[6] = t1 - x1; arr[7] = t0 - x0;
     }
 
     private void ReadRun(out bool last, out int run, out int level)
@@ -236,7 +237,11 @@ public sealed class MobiclipDecoder
     internal static void Reconstruct(Span<int> mat, byte[] dst, int stride, int bx, int by, int size)
     {
         mat[0] += 32;
-        for (int y = 0; y < size; y++) Idct(mat.Slice(y * size, size), size);
+        for (int y = 0; y < size; y++)
+        {
+            var row = mat.Slice(y * size, size);
+            if (y == 0 || row.ContainsAnyExcept(0)) Idct(row, size); // an all-zero row stays zero
+        }
         int o = by * stride + bx;
         for (int y = 0; y < size; y++)
         {
@@ -339,7 +344,23 @@ public sealed class MobiclipDecoder
         _pb = buf; _ps = stride; _pw = PlaneW(plane); _ph = PlaneH(plane); _pax = ax; _pay = ay; _psize = size;
         switch (pmode)
         {
-            case 0: case 1: case 4: case 5: case 6: case 7: case 8:
+            case 0:
+            {
+                // every row repeats the row above the block (or the block's own first row on the top edge)
+                Span<byte> row = stackalloc byte[16];
+                buf.AsSpan(Math.Max(ay - 1, 0) * stride + ax, size).CopyTo(row);
+                for (int y = 0; y < size; y++) row[..size].CopyTo(buf.AsSpan(ax + (ay + y) * stride, size));
+                break;
+            }
+            case 1:
+                // every row repeats the pixel left of it (or the block's own first pixel on the left edge)
+                for (int y = 0; y < size; y++)
+                {
+                    int o = (ay + y) * stride;
+                    buf.AsSpan(o + ax, size).Fill(buf[o + Math.Max(ax - 1, 0)]);
+                }
+                break;
+            case 4: case 5: case 6: case 7: case 8:
                 for (int y = 0; y < size; y++)
                     for (int x = 0; x < size; x++)
                         buf[ax + x + (ay + y) * stride] = (byte)Pick(pmode, x, y);

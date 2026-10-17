@@ -45,6 +45,9 @@ internal sealed class Vlc
     private readonly int[] _sym;
     private readonly byte[] _len;
     public readonly Dictionary<int, (uint Code, int Len)> Codes = new();
+    /// <summary>Code and length per symbol (length 0 = no code), for fast lookups by the encoder.</summary>
+    public readonly byte[] LenOf;
+    public readonly uint[] CodeOf;
     public int LastLen;
 
     public Vlc(ReadOnlySpan<byte> lens, ReadOnlySpan<int> syms)
@@ -66,7 +69,15 @@ internal sealed class Vlc
             for (int k = lo; k < hi; k++) { _sym[k] = syms[i]; _len[k] = (byte)l; }
             code += 1UL << (32 - l);
         }
+        int maxSym = 0;
+        foreach (var k in Codes.Keys) maxSym = Math.Max(maxSym, k);
+        LenOf = new byte[maxSym + 1];
+        CodeOf = new uint[maxSym + 1];
+        foreach (var (k, v) in Codes) { LenOf[k] = (byte)v.Len; CodeOf[k] = v.Code; }
     }
+
+    /// <summary>Code length of <paramref name="sym"/>, or 0 if it has no code.</summary>
+    public int Len(int sym) => (uint)sym < (uint)LenOf.Length ? LenOf[sym] : 0;
 
     public int Read(BitsMsb br)
     {
@@ -88,6 +99,9 @@ internal sealed class BitWriterMsb
 
     public void Bit(int b) { _cur = (_cur << 1) | (b & 1); if (++_n == 8) { _bytes.Add((byte)_cur); _cur = 0; _n = 0; } }
     public void Bits(int v, int count) { for (int i = count - 1; i >= 0; i--) Bit((v >> i) & 1); }
+    /// <summary>Number of bits <see cref="UE"/> writes for <paramref name="v"/>.</summary>
+    public static int UeLen(int v) => 2 * (31 - System.Numerics.BitOperations.LeadingZeroCount((uint)(v + 1))) + 1;
+    public static int SeLen(int v) => UeLen(v > 0 ? 2 * v - 1 : -2 * v);
     public void UE(int v)
     {
         int x = v + 1, len = 0;
@@ -95,7 +109,12 @@ internal sealed class BitWriterMsb
         Bits(0, len); Bits(x, len + 1);
     }
     public void SE(int v) => UE(v > 0 ? 2 * v - 1 : -2 * v);
-    public void Code(Vlc vlc, int sym) { var (c, l) = vlc.Codes[sym]; Bits((int)c, l); }
+    public void Code(Vlc vlc, int sym)
+    {
+        int l = vlc.Len(sym);
+        if (l == 0) throw new KeyNotFoundException($"No code for symbol {sym}.");
+        Bits((int)vlc.CodeOf[sym], l);
+    }
 
     /// <summary>Returns the stream padded to a whole number of 16-bit words with each word byte-swapped (the on-disk order).</summary>
     public byte[] ToPacket()

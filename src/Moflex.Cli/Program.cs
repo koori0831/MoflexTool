@@ -34,6 +34,7 @@ internal static class Program
           --pcm                   store audio as 16-bit PCM instead of IMA-ADPCM
           --rate HZ               audio sample rate (default: from --like, else 47864)
           --max-frames N          encode only the first N input frames
+          --threads N             key-frame segments encoded in parallel (default: CPU cores)
           --ffmpeg <path>         FFmpeg executable used to decode non-.yuv input (default: ffmpeg on PATH)
 
         Developer commands:

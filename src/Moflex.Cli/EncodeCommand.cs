@@ -33,6 +33,7 @@ internal static class EncodeCommand
                 case "--pcm": job.Pcm16 = true; break;
                 case "--ffmpeg": job.Ffmpeg = a[++i]; break;
                 case "--max-frames": job.MaxFrames = int.Parse(a[++i]); break;
+                case "--threads": job.Threads = int.Parse(a[++i]); break;
                 default: throw new ArgumentException($"Unknown encode option '{a[i]}'.");
             }
         int lastPct = -1;

@@ -1,3 +1,4 @@
+using Moflex.Core;
 using Moflex.Core.Video;
 using Xunit;
 
@@ -35,6 +36,17 @@ public class VideoTests
             for (int k = 0; k < src.Y.Length; k++) { int e = src.Y[k] - d.Y[k]; se += e * e; }
             Assert.True(10 * Math.Log10(255.0 * 255 * src.Y.Length / Math.Max(se, 1)) > 30);
         }
+    }
+
+    [Fact]
+    public void ParallelSegmentsGiveTheSameFile()
+    {
+        var frames = Enumerable.Range(0, 20).Select(i => Synthetic(64, 48, i / 3)).ToList();
+        byte[] Run(int threads) => MovieEncoder.Encode(frames, null, new MovieEncodeOptions
+        {
+            Width = 64, Height = 48, Audio = AudioFormat.None, MaxKeyInterval = 4, Threads = threads,
+        });
+        Assert.Equal(Run(1), Run(4));
     }
 
     [Fact]

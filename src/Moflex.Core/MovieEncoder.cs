@@ -38,6 +38,8 @@ public sealed class MovieEncodeOptions
     public int Channels { get; set; } = 2;
     /// <summary>Called after every encoded stored frame with the number of frames done.</summary>
     public Action<long>? Progress { get; set; }
+    /// <summary>Number of key-frame segments encoded at once (0 = one per CPU core). The output does not depend on it.</summary>
+    public int Threads { get; set; }
     /// <summary>Write the seek table (data stream) like existing files.</summary>
     public bool SeekTable { get; set; } = true;
 }
@@ -79,28 +81,62 @@ public static class MovieEncoder
         // time stamp of the k-th group of stored frames, microseconds (+1: files start at 1)
         long VideoTime(long frame) => frame / group * (long)group * o.FrameDurNum * 1000000L / o.FrameDurDen + 1;
 
-        var packets = new List<MuxPacket>();
-        var enc = new MobiclipEncoder(o.Width, o.Height, o.Quantizer) { MaxRefs = stereo ? 2 : 1 };
+        // Key frames are chosen from the source alone and nothing is predicted across them, so every
+        // key-frame-led segment is encoded independently (and in parallel) with a fresh encoder.
+        long done = 0;
+        var progressLock = new object();
+        List<MuxPacket> EncodeSegment(List<YuvFrame> seg, long start)
+        {
+            var enc = new MobiclipEncoder(o.Width, o.Height, o.Quantizer) { MaxRefs = stereo ? 2 : 1 };
+            var res = new List<MuxPacket>(seg.Count);
+            for (int i = 0; i < seg.Count; i++)
+            {
+                bool key = i == 0;
+                var data = key ? enc.EncodeKeyFrame(seg[i], out _) : enc.EncodePredictedFrame(seg[i], o.PredictedQuantizer, out _);
+                long k = start + i;
+                res.Add(new MuxPacket { StreamIndex = 0, Data = data, TimeUs = VideoTime(k), IsSync = key, FrameIndex = (int)k });
+                if (o.Progress != null) lock (progressLock) o.Progress(++done);
+            }
+            seg.Clear();
+            return res;
+        }
+
+        int threads = o.Threads > 0 ? o.Threads : Environment.ProcessorCount;
+        using var gate = new SemaphoreSlim(threads);
+        var segments = new List<Task<List<MuxPacket>>>();
+        var current = new List<YuvFrame>();
+        long segStart = 0;
+        void CloseSegment()
+        {
+            if (current.Count == 0) return;
+            var seg = current; long start = segStart;
+            current = new List<YuvFrame>();
+            gate.Wait(); // bounds the number of buffered segments
+            segments.Add(Task.Run(() => { try { return EncodeSegment(seg, start); } finally { gate.Release(); } }));
+        }
+
         long n = 0;
         YuvFrame? prev = null;
         int sinceKey = 0;
-        void EncodeOne(YuvFrame f)
+        void PlanOne(YuvFrame f)
         {
             // a scene cut is only allowed on the first frame of a stamp group
             bool canCut = n % group == 0;
             bool key = prev == null || (canCut && (sinceKey >= o.MaxKeyInterval || MeanAbsDiff(prev, f) > o.SceneCutThreshold));
-            var data = key ? enc.EncodeKeyFrame(f, out _) : enc.EncodePredictedFrame(f, o.PredictedQuantizer, out _);
+            if (key) { CloseSegment(); segStart = n; }
+            current.Add(f);
             sinceKey = key ? 1 : sinceKey + 1;
             prev = f;
-            packets.Add(new MuxPacket { StreamIndex = 0, Data = data, TimeUs = VideoTime(n), IsSync = key, FrameIndex = (int)n });
             n++;
-            o.Progress?.Invoke(n);
         }
         foreach (var f in frames)
         {
-            EncodeOne(f);
-            if (o.Stereo == StereoMode.Duplicate) EncodeOne(f);
+            PlanOne(f);
+            if (o.Stereo == StereoMode.Duplicate) PlanOne(f);
         }
+        CloseSegment();
+        var packets = new List<MuxPacket>();
+        foreach (var t in segments) packets.AddRange(t.GetAwaiter().GetResult());
         long totalFrames = n;
         long duration = (totalFrames + group - 1) / group * (long)group * o.FrameDurNum * 1000000L / o.FrameDurDen;
 

@@ -1,5 +1,9 @@
 // Mobiclip video encoder (original work). It reuses the decoder's reconstruction code and the
 // FFmpeg-derived tables, so the whole project is distributed under the GNU LGPL v2.1 or later.
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
 namespace Moflex.Core.Video;
 
 /// <summary>
@@ -77,52 +81,136 @@ public sealed class MobiclipEncoder
         return inv;
     }
 
-    /// <summary>Transforms a spatial residual (row-major) into quantised levels in zigzag order. Returns null if all zero.</summary>
-    private int[]? ForwardQuant(int[] resid, int size, int[] qtab)
+    // row-major (mi[k * n + a] = m[k][a]) and transposed copies of the inverse matrices
+    private static readonly double[] Minv4Flat = Flat(Minv4, false), Minv8Flat = Flat(Minv8, false);
+    private static readonly double[] Minv4T = Flat(Minv4, true), Minv8T = Flat(Minv8, true);
+    // 64 * (largest matrix entry)^2: bounds |coefficient| / sum|residual|
+    private static readonly double Gain4 = MaxGain(Minv4), Gain8 = MaxGain(Minv8);
+
+    private static double[] Flat(double[][] m, bool transpose)
     {
-        var mi = size == 8 ? Minv8 : Minv4;
-        var tmp = new double[size * size];
-        for (int k = 0; k < size; k++)
-            for (int b = 0; b < size; b++)
-            {
-                double s = 0;
-                for (int a = 0; a < size; a++) s += mi[k][a] * resid[b * size + a];
-                tmp[k * size + b] = s * 64.0;
-            }
-        var c = new double[size * size];
-        for (int k = 0; k < size; k++)
-            for (int j = 0; j < size; j++)
-            {
-                double s = 0;
-                for (int b = 0; b < size; b++) s += tmp[k * size + b] * mi[j][b];
-                c[k * size + j] = s;
-            }
+        int n = m.Length;
+        var f = new double[n * n];
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++) f[i * n + j] = transpose ? m[j][i] : m[i][j];
+        return f;
+    }
+
+    // 64 * (largest row sum of |entries|)^2: bounds |coefficient| / max|residual|
+    private static readonly double RowGain4 = RowGain(Minv4), RowGain8 = RowGain(Minv8);
+
+    private static double MaxGain(double[][] m)
+    {
+        double mx = m.SelectMany(r => r).Max(Math.Abs);
+        return 64 * mx * mx;
+    }
+
+    private static double RowGain(double[][] m)
+    {
+        double mx = m.Max(r => r.Sum(Math.Abs));
+        return 64 * mx * mx;
+    }
+
+    // natural-order index -> zigzag position
+    private static readonly byte[] Unzig4 = Unzig(4), Unzig8 = Unzig(8);
+
+    private static byte[] Unzig(int size)
+    {
         var zt = MobiclipDecoder.ZigzagFor(size);
-        var levels = new int[size * size];
-        bool any = false;
-        for (int p = 0; p < size * size; p++)
+        var u = new byte[size * size];
+        for (int p = 0; p < u.Length; p++) u[zt[p]] = (byte)p;
+        return u;
+    }
+
+    // quantiser steps in natural order, as doubles, for the current quantiser
+    private readonly double[][] _qNat = { new double[16], new double[64] };
+    private int _qNatFor = -1;
+
+    private double[] QuantNatural(int size)
+    {
+        if (_qNatFor != _dec.Quantizer)
         {
-            double v = c[zt[p]] / qtab[p];
-            int l = (int)Math.Floor(Math.Abs(v) + 0.5 - DeadZone);
-            if (l < 0) l = 0;
-            if (l > 2047) l = 2047;
-            if (v < 0) l = -l;
-            levels[p] = l;
-            if (l != 0) any = true;
+            for (int s = 4; s <= 8; s += 4)
+            {
+                var q = _dec.QuantTable(s);
+                var zt = MobiclipDecoder.ZigzagFor(s);
+                var d = _qNat[s == 8 ? 1 : 0];
+                for (int p = 0; p < s * s; p++) d[zt[p]] = q[p];
+            }
+            _qNatFor = _dec.Quantizer;
         }
-        return any ? levels : null;
+        return _qNat[size == 8 ? 1 : 0];
+    }
+
+    /// <summary>Transforms a spatial residual (row-major) into quantised levels in zigzag order. Returns null if all zero.</summary>
+    private int[]? ForwardQuant(ReadOnlySpan<int> resid, int size, int[] qtab)
+    {
+        // Cheap exact test: if no coefficient can reach the rounding threshold the block is all zero.
+        int sum = 0, maxR = 0, n = size * size;
+        for (int i = 0; i < n; i++) { int a = Math.Abs(resid[i]); sum += a; maxR = Math.Max(maxR, a); }
+        int qmin = int.MaxValue;
+        for (int i = 0; i < n; i++) qmin = Math.Min(qmin, qtab[i]);
+        double bound = Math.Min(sum * (size == 8 ? Gain8 : Gain4), maxR * (size == 8 ? RowGain8 : RowGain4));
+        if (bound < 0.999 * (0.5 + DeadZone) * qmin) return null;
+
+        var mi = size == 8 ? Minv8Flat : Minv4Flat;
+        var mt = size == 8 ? Minv8T : Minv4T;
+        Span<double> rt = stackalloc double[64], tmp = stackalloc double[64], c = stackalloc double[64];
+        for (int b = 0; b < size; b++)
+            for (int a = 0; a < size; a++) rt[a * size + b] = resid[b * size + a];
+        ref double rtR = ref MemoryMarshal.GetReference(rt), tmpR = ref MemoryMarshal.GetReference(tmp), cR = ref MemoryMarshal.GetReference(c);
+        ref double mtR = ref MemoryMarshal.GetArrayDataReference(mt);
+        // Vectorised across the output index so every sum is still accumulated in the same order as the scalar
+        // definitions tmp[k][b] = 64 * sum_a m[k][a] * r[b][a] and c[k][j] = sum_b tmp[k][b] * m[j][b].
+        for (int k = 0; k < size; k++)
+            for (int v = 0; v < size; v += 4)
+            {
+                var acc = Vector256<double>.Zero;
+                for (int a = 0; a < size; a++) acc += Vector256.Create(mi[k * size + a]) * Vector256.LoadUnsafe(ref rtR, (nuint)(a * size + v));
+                (acc * 64.0).StoreUnsafe(ref tmpR, (nuint)(k * size + v));
+            }
+        for (int k = 0; k < size; k++)
+            for (int v = 0; v < size; v += 4)
+            {
+                var acc = Vector256<double>.Zero;
+                for (int b = 0; b < size; b++) acc += Vector256.Create(tmp[k * size + b]) * Vector256.LoadUnsafe(ref mtR, (nuint)(b * size + v));
+                acc.StoreUnsafe(ref cR, (nuint)(k * size + v));
+            }
+        // level = floor(|c / q| + 0.5 - DeadZone), evaluated in that order as in the scalar form
+        ref double qR = ref MemoryMarshal.GetArrayDataReference(QuantNatural(size));
+        var half = Vector256.Create(0.5);
+        var dz = Vector256.Create(DeadZone);
+        var unzig = size == 8 ? Unzig8 : Unzig4;
+        int[]? levels = null;
+        for (int i = 0; i < n; i += 4)
+        {
+            var val = Vector256.LoadUnsafe(ref cR, (nuint)i) / Vector256.LoadUnsafe(ref qR, (nuint)i);
+            var l = Vector256.Floor(Vector256.Abs(val) + half - dz);
+            if (Vector256.GreaterThanAll(Vector256.Create(1.0), l)) continue;
+            for (int e = 0; e < 4; e++)
+            {
+                int li = (int)l.GetElement(e);
+                if (li <= 0) continue;
+                if (li > 2047) li = 2047;
+                levels ??= new int[n];
+                levels[unzig[i + e]] = val.GetElement(e) < 0 ? -li : li;
+            }
+        }
+        return levels;
     }
 
     // ---------- entropy coding ----------
 
-    private static void WriteCoeffs(BitWriterMsb bw, int[] levels, int tab)
+    /// <summary>Codes the levels of one block; with a null writer it only counts. Returns the number of bits.</summary>
+    private static int WriteCoeffs(BitWriterMsb? bw, int[] levels, int tab)
     {
         var vlc = MobiclipDecoder.RlVlc[tab];
         var res = MobiclipTables.RunResidue;
         int ro = tab * 256;
+        int esc = vlc.Len(0);
         int last = -1;
         for (int p = 0; p < levels.Length; p++) if (levels[p] != 0) last = p;
-        int prev = -1;
+        int prev = -1, bits = 0;
         for (int p = 0; p <= last; p++)
         {
             int l = levels[p];
@@ -131,39 +219,45 @@ public sealed class MobiclipEncoder
             int run = p - prev - 1, a = Math.Abs(l);
             prev = p;
             int lb = isLast ? 1 << 11 : 0;
-            int sym = lb | (run << 5) | a;
-            if (a <= 31 && vlc.Codes.ContainsKey(sym)) { bw.Code(vlc, sym); bw.Bit(l < 0 ? 1 : 0); continue; }
-            int r1 = res[ro + (isLast ? 64 : 0) + run];
-            if (r1 > 0 && a - r1 >= 1 && a - r1 <= 31 && vlc.Codes.ContainsKey(lb | (run << 5) | (a - r1)))
+            int sym = lb | (run << 5) | a, len;
+            if (a <= 31 && (len = vlc.Len(sym)) != 0)
             {
-                bw.Code(vlc, 0); bw.Bit(0); bw.Code(vlc, lb | (run << 5) | (a - r1)); bw.Bit(l < 0 ? 1 : 0); continue;
+                bits += len + 1;
+                if (bw != null) { bw.Code(vlc, sym); bw.Bit(l < 0 ? 1 : 0); }
+                continue;
             }
-            bool done = false;
+            int r1 = res[ro + (isLast ? 64 : 0) + run];
+            if (r1 > 0 && a - r1 >= 1 && a - r1 <= 31 && (len = vlc.Len(lb | (run << 5) | (a - r1))) != 0)
+            {
+                bits += esc + 1 + len + 1;
+                if (bw != null) { bw.Code(vlc, 0); bw.Bit(0); bw.Code(vlc, lb | (run << 5) | (a - r1)); bw.Bit(l < 0 ? 1 : 0); }
+                continue;
+            }
             if (a <= 31)
             {
                 int r2 = res[ro + 128 + (isLast ? 64 : 0) + a];
                 int baseRun = run - r2;
-                if (r2 > 0 && baseRun >= 0 && vlc.Codes.ContainsKey(lb | (baseRun << 5) | a))
+                if (r2 > 0 && baseRun >= 0 && (len = vlc.Len(lb | (baseRun << 5) | a)) != 0)
                 {
-                    bw.Code(vlc, 0); bw.Bit(1); bw.Bit(0); bw.Code(vlc, lb | (baseRun << 5) | a); bw.Bit(l < 0 ? 1 : 0); done = true;
+                    bits += esc + 2 + len + 1;
+                    if (bw != null) { bw.Code(vlc, 0); bw.Bit(1); bw.Bit(0); bw.Code(vlc, lb | (baseRun << 5) | a); bw.Bit(l < 0 ? 1 : 0); }
+                    continue;
                 }
             }
-            if (done) continue;
-            bw.Code(vlc, 0); bw.Bit(1); bw.Bit(1);
-            bw.Bit(isLast ? 1 : 0); bw.Bits(run, 6); bw.Bits(l & 0xFFF, 12);
+            bits += esc + 2 + 1 + 6 + 12;
+            if (bw != null)
+            {
+                bw.Code(vlc, 0); bw.Bit(1); bw.Bit(1);
+                bw.Bit(isLast ? 1 : 0); bw.Bits(run, 6); bw.Bits(l & 0xFFF, 12);
+            }
         }
+        return bits;
     }
 
-    private static int BlockBits(int[]? levels, int tab)
-    {
-        if (levels == null) return 0;
-        var bw = new BitWriterMsb();
-        bw.UE(0); WriteCoeffs(bw, levels, tab);
-        return bw.BitCount;
-    }
+    private static int BlockBits(int[]? levels, int tab) => levels == null ? 0 : UeBits(0) + WriteCoeffs(null, levels, tab);
 
-    private static int UeBits(int v) { var b = new BitWriterMsb(); b.UE(v); return b.BitCount; }
-    private static int SeBits(int v) { var b = new BitWriterMsb(); b.SE(v); return b.BitCount; }
+    private static int UeBits(int v) => BitWriterMsb.UeLen(v);
+    private static int SeBits(int v) => BitWriterMsb.SeLen(v);
 
     // ---------- shared block coding ----------
 
@@ -171,9 +265,16 @@ public sealed class MobiclipEncoder
     {
         public readonly byte[] Y = new byte[256], U = new byte[64], V = new byte[64];
 
-        public void Save(byte[][] f, int x, int y, int w)
+        public void Save(byte[][] f, int x, int y, int w) { SaveLuma(f, x, y, w); SaveChroma(f, x, y, w); }
+        public void Restore(byte[][] f, int x, int y, int w) { RestoreLuma(f, x, y, w); RestoreChroma(f, x, y, w); }
+
+        public void SaveLuma(byte[][] f, int x, int y, int w)
         {
             for (int r = 0; r < 16; r++) Array.Copy(f[0], (y + r) * w + x, Y, r * 16, 16);
+        }
+
+        public void SaveChroma(byte[][] f, int x, int y, int w)
+        {
             int cw = w >> 1;
             for (int r = 0; r < 8; r++)
             {
@@ -182,9 +283,13 @@ public sealed class MobiclipEncoder
             }
         }
 
-        public void Restore(byte[][] f, int x, int y, int w)
+        public void RestoreLuma(byte[][] f, int x, int y, int w)
         {
             for (int r = 0; r < 16; r++) Array.Copy(Y, r * 16, f[0], (y + r) * w + x, 16);
+        }
+
+        public void RestoreChroma(byte[][] f, int x, int y, int w)
+        {
             int cw = w >> 1;
             for (int r = 0; r < 8; r++)
             {
@@ -198,7 +303,7 @@ public sealed class MobiclipEncoder
     private int[]? Residual(byte[][] frame, byte[] src, int stride, int bx, int by, int size, int plane)
     {
         var recon = frame[plane];
-        var resid = new int[size * size];
+        Span<int> resid = stackalloc int[size * size];
         for (int y = 0; y < size; y++)
             for (int x = 0; x < size; x++)
                 resid[y * size + x] = src[(by + y) * stride + bx + x] - recon[(by + y) * stride + bx + x];
@@ -217,7 +322,7 @@ public sealed class MobiclipEncoder
 
     private static double Sse(byte[] a, byte[] b, int stride, int x0, int y0, int w, int h)
     {
-        double s = 0;
+        int s = 0; // exact: at most 256 * 255^2
         for (int y = y0; y < y0 + h; y++)
             for (int x = x0; x < x0 + w; x++) { int d = a[y * stride + x] - b[y * stride + x]; s += d * d; }
         return s;
@@ -289,25 +394,30 @@ public sealed class MobiclipEncoder
         return plan;
     }
 
+    private readonly Region _bestIntra = new();
+
     /// <summary>Chooses intra modes for a macroblock and leaves its reconstruction in the picture.</summary>
     private IntraMb PlanIntraMb(byte[][] frame, YuvFrame src, int x, int y, double lambda, int tab)
     {
+        // The best trial's reconstruction is kept and put back, instead of coding the winning mode again.
         Plan? best = null;
         foreach (int m in CandidateModes)
         {
             if (!ModeValid(m, x, y)) continue;
             var p = PlanLuma(frame, src, x, y, m, lambda, tab);
-            if (best == null || p.Cost < best.Cost) best = p;
+            if (best == null || p.Cost < best.Cost) { best = p; _bestIntra.SaveLuma(frame, x, y, _w); }
         }
-        var luma = PlanLuma(frame, src, x, y, best!.Mode, lambda, tab);
+        var luma = best!;
+        _bestIntra.RestoreLuma(frame, x, y, _w);
         Plan? bestC = null;
         foreach (int m in CandidateModes)
         {
             if (!ModeValid(m, x >> 1, y >> 1)) continue;
             var p = PlanChroma(frame, src, x, y, m, lambda, tab);
-            if (bestC == null || p.Cost < bestC.Cost) bestC = p;
+            if (bestC == null || p.Cost < bestC.Cost) { bestC = p; _bestIntra.SaveChroma(frame, x, y, _w); }
         }
-        var chroma = PlanChroma(frame, src, x, y, bestC!.Mode, lambda, tab);
+        var chroma = bestC!;
+        _bestIntra.RestoreChroma(frame, x, y, _w);
         int flags = 0;
         for (int i = 0; i < 4; i++) if (luma.Levels[i] != null) flags |= 1 << i;
         for (int i = 0; i < 2; i++) if (chroma.Levels[i] != null) flags |= 1 << (4 + i);
@@ -345,7 +455,7 @@ public sealed class MobiclipEncoder
         int sidx = _dec.RingIndex(Math.Max(1, index));
         _dec.MotionCompensate(sidx, mvx, mvy, 16, 16, x, y);
         var mb = new InterMb { Index = index, Mvx = mvx, Mvy = mvy };
-        double bits = MobiclipDecoder.MvVlc[1][0].Codes[index].Len;
+        double bits = MobiclipDecoder.MvVlc[1][0].Len(index);
         if (index > 0) bits += SeBits(mvx - pred.x) + SeBits(mvy - pred.y);
         int i = 0, flags = 0;
         foreach (var (bx, by) in new[] { (x, y), (x + 8, y), (x, y + 8), (x + 8, y + 8) })
@@ -377,16 +487,45 @@ public sealed class MobiclipEncoder
         };
     }
 
+    /// <summary>Luma SAD of a 16x16 block against the half-pel prediction; any value at or above <paramref name="limit"/> may be returned early.</summary>
     private int LumaSad(byte[] refY, YuvFrame src, int x, int y, int mvx, int mvy, int limit)
     {
         int method = (mvx & 1) | ((mvy & 1) << 1);
         int rx = x + (mvx >> 1), ry = y + (mvy >> 1);
+        if (Sse2.IsSupported) return LumaSadSse2(refY, src.Y, _w, x, y, rx, ry, method, limit);
         int sad = 0;
         for (int r = 0; r < 16; r++)
         {
             for (int c = 0; c < 16; c++)
                 sad += Math.Abs(src.Y[(y + r) * _w + x + c] - PelAt(refY, _w, rx + c, ry + r, method));
             if (sad >= limit) return sad;
+        }
+        return sad;
+    }
+
+    // (a >> 1) per byte lane
+    private static Vector128<byte> Half(Vector128<byte> v) => Vector128.ShiftRightLogical(v.AsUInt16(), 1).AsByte() & Vector128.Create((byte)0x7F);
+
+    private static int LumaSadSse2(byte[] refY, byte[] srcY, int w, int x, int y, int rx, int ry, int method, int limit)
+    {
+        int sad = 0;
+        int so = y * w + x, ro = ry * w + rx;
+        for (int r = 0; r < 16; r++, so += w, ro += w)
+        {
+            var s = Vector128.Create(srcY.AsSpan(so, 16));
+            var p = Vector128.Create(refY.AsSpan(ro, 16));
+            switch (method)
+            {
+                case 1: p = Half(p) + Half(Vector128.Create(refY.AsSpan(ro + 1, 16))); break;
+                case 2: p = Half(p) + Half(Vector128.Create(refY.AsSpan(ro + w, 16))); break;
+                case 3:
+                    p = Half(Half(p) + Half(Vector128.Create(refY.AsSpan(ro + 1, 16)))) +
+                        Half(Half(Vector128.Create(refY.AsSpan(ro + w, 16))) + Half(Vector128.Create(refY.AsSpan(ro + w + 1, 16))));
+                    break;
+            }
+            var d = Sse2.SumAbsoluteDifferences(s, p);
+            sad += d.GetElement(0) + d.GetElement(4);
+            if ((r & 3) == 3 && sad >= limit) return sad;
         }
         return sad;
     }
@@ -398,14 +537,16 @@ public sealed class MobiclipEncoder
         (int x, int y) best = (0, 0);
         void Try(int mx, int my)
         {
-            if (!_dec.MvInRange(mx, my, 16, 16, x, y)) return;
             int pen = 2 * (Math.Abs(mx - pred.x) + Math.Abs(my - pred.y)) / 2;
-            int s = LumaSad(refY, src, x, y, mx, my, bestSad) + pen;
+            if (pen >= bestSad || !_dec.MvInRange(mx, my, 16, 16, x, y)) return;
+            int s = LumaSad(refY, src, x, y, mx, my, bestSad - pen) + pen;
             if (s < bestSad) { bestSad = s; best = (mx, my); }
         }
         Try(pred.x, pred.y);
         Try(0, 0);
-        var centers = new[] { ((pred.x >> 1) << 1, (pred.y >> 1) << 1), (0, 0) };
+        var c1 = ((pred.x >> 1) << 1, (pred.y >> 1) << 1);
+        // a repeated position can never beat itself, so a second identical scan is skipped
+        var centers = c1 == (0, 0) ? new[] { c1 } : new[] { c1, (0, 0) };
         foreach (var (cx, cy) in centers)
             for (int dy = -SearchRange; dy <= SearchRange; dy++)
                 for (int dx = -SearchRange; dx <= SearchRange; dx++)
@@ -491,7 +632,7 @@ public sealed class MobiclipEncoder
                 }
 
                 var intra = PlanIntraMb(frame, src, x, y, lambda, 0);
-                double intraCost = intra.Cost + lambda * MobiclipDecoder.MvVlc[1][0].Codes[6].Len;
+                double intraCost = intra.Cost + lambda * MobiclipDecoder.MvVlc[1][0].Len(6);
                 if (bestInter == null || intraCost < bestInter.Cost)
                 {
                     bw.Code(MobiclipDecoder.MvVlc[1][0], 6);
