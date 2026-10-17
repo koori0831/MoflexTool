@@ -126,6 +126,9 @@ public class FastAudioTests
         Assert.Equal("fastaudio", a.CodecName);
         var wav = new MemoryStream();
         MoflexExport.WriteWav(f, wav);
-        Assert.Equal(44 + (5000 + 255) / 256 * 256 * 2, wav.Length);
+        // 5000 samples of audio but only 4 frames of video: the audio is cut to the video's length,
+        // one packet per frame: round(4 · 32000 · 1001/30000 / 256) · 256 = 4352 samples.
+        Assert.Equal(4, f.Packets.Count(p => p.StreamIndex == a.Index));
+        Assert.Equal(44 + 4352 * 2, wav.Length);
     }
 }
