@@ -77,6 +77,26 @@ public class ExportTests
     }
 
     [Fact]
+    public void FlatAndRealStereoAreTold()
+    {
+        var real = MoflexVideoReader.AnalyzeStereo(Stereo(out _))!;
+        Assert.True(real.IsReal3D);
+        Assert.Equal(6, real.DifferentPairs);
+
+        var frames = Enumerable.Range(0, 6).Select(i => Flat(64, 48, (byte)(60 + i * 5))).ToList();
+        var flat = MoflexFile.Parse(MovieEncoder.Encode(frames, null, new MovieEncodeOptions
+        {
+            Width = 64, Height = 48, Stereo = StereoMode.Duplicate, Audio = AudioFormat.None, Quantizer = 40, PredictedQuantizer = 60,
+        }));
+        var report = MoflexVideoReader.AnalyzeStereo(flat)!;
+        Assert.False(report.IsReal3D);
+        Assert.Equal(6, report.Pairs);
+
+        Assert.Null(MoflexVideoReader.AnalyzeStereo(MoflexFile.Parse(MovieEncoder.Encode(frames, null,
+            new MovieEncodeOptions { Width = 64, Height = 48, Audio = AudioFormat.None }))));
+    }
+
+    [Fact]
     public void BgraConversionUsesVideoRange()
     {
         var f = new YuvFrame { Width = 2, Height = 2, Y = new byte[] { 16, 235, 16, 235 }, U = new byte[] { 128 }, V = new byte[] { 128 } };

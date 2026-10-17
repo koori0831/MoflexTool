@@ -22,7 +22,9 @@ internal static class Program
                                                           and that every video frame decodes
 
         Export options (.avi / .mov):
-          --eye sbs|left|right    3D movies: both eyes side by side (default, re-encodes as 3D) or one eye
+          --eye auto|sbs|left|right
+                                  3D movies: both eyes side by side (re-encodes as 3D) or one eye; auto (default)
+                                  picks sbs for real 3D and left when both eyes show the same picture
           --codec C               lossless video codec: utvideo (default), ffv1, magicyuv, rawvideo (.avi only)
           --no-audio              video only
           --max-frames N          export only the first N pictures
@@ -68,7 +70,11 @@ internal static class Program
             var file = MoflexFile.Load(args[1]);
             switch (args[0])
             {
-                case "info": Console.Write(MoflexExport.Describe(file)); return 0;
+                case "info":
+                    Console.Write(MoflexExport.Describe(file));
+                    if (MoflexVideoReader.AnalyzeStereo(file) is { } st)
+                        Console.WriteLine($"3D         : {st} (max difference {st.MaxDifference:0.##})");
+                    return 0;
                 case "export-audio":
                 {
                     using var o = File.Create(Need(args, 2, "output .wav"));
@@ -134,7 +140,8 @@ internal static class Program
             Ffmpeg = Option(args, "--ffmpeg") ?? "ffmpeg", Codec = Option(args, "--codec") ?? "utvideo",
             Eyes = Option(args, "--eye") switch
             {
-                null or "sbs" => EyeLayout.SideBySide,
+                null or "auto" => null,
+                "sbs" => EyeLayout.SideBySide,
                 "left" => EyeLayout.Left,
                 "right" => EyeLayout.Right,
                 var e => throw new ArgumentException($"Unknown --eye '{e}' (use sbs, left or right)."),

@@ -16,8 +16,11 @@ public sealed class VideoExport
     public MoflexFile File { get; set; } = null!;
     public string Output { get; set; } = "out.avi";
     public string Ffmpeg { get; set; } = "ffmpeg";
-    /// <summary>3D movies only: both eyes side by side (default) or one eye.</summary>
-    public EyeLayout Eyes { get; set; } = EyeLayout.SideBySide;
+    /// <summary>
+    /// 3D movies only: both eyes side by side or one eye. Null (default) decides from the picture: side by side for
+    /// real 3D, the left eye alone when both eyes show the same picture (see <see cref="MoflexVideoReader.AnalyzeStereo"/>).
+    /// </summary>
+    public EyeLayout? Eyes { get; set; }
     public string Codec { get; set; } = "utvideo";
     public bool NoAudio { get; set; }
     public int MaxFrames { get; set; } = int.MaxValue;
@@ -34,7 +37,13 @@ public sealed class VideoExport
         if (!Codecs.Contains(Codec)) throw new ArgumentException($"Unknown codec '{Codec}' (use {string.Join(", ", Codecs)}).");
         if (Codec == "rawvideo" && ext == ".mov") throw new ArgumentException("rawvideo yuv420p cannot be stored in .mov; use .avi or another codec.");
 
-        var reader = new MoflexVideoReader(File, Eyes);
+        var eyes = Eyes ?? EyeLayout.SideBySide;
+        if (Eyes == null && MoflexVideoReader.AnalyzeStereo(File) is { } st)
+        {
+            Log?.Invoke("3D: " + st + ".");
+            if (!st.IsReal3D) { eyes = EyeLayout.Left; Log?.Invoke("Exporting one eye as ordinary 2D video."); }
+        }
+        var reader = new MoflexVideoReader(File, eyes);
         int total = Math.Min(reader.FrameCount, MaxFrames);
         bool audio = !NoAudio && File.Streams.Any(s => s.Kind == StreamKind.Audio);
         string? wav = null;
@@ -50,11 +59,11 @@ public sealed class VideoExport
             }
             args.Append($" -c:v {Codec} -pix_fmt yuv420p");
             if (Codec == "ffv1") args.Append(" -level 3 -g 1");
-            if (reader.IsStereo && Eyes == EyeLayout.SideBySide) args.Append(" -metadata:s:v:0 stereo_mode=left_right");
+            if (reader.IsStereo && eyes == EyeLayout.SideBySide) args.Append(" -metadata:s:v:0 stereo_mode=left_right");
             args.Append($" \"{Output}\"");
 
             Log?.Invoke($"Writing {total} pictures ({reader.Width}x{reader.Height}, {reader.FpsNum}/{reader.FpsDen} fps, {Codec}"
-                        + (reader.IsStereo ? $", 3D {(Eyes == EyeLayout.SideBySide ? "side-by-side" : Eyes + " eye")}" : "") + ")...");
+                        + (reader.IsStereo ? $", 3D {(eyes == EyeLayout.SideBySide ? "side-by-side" : eyes + " eye")}" : "") + ")...");
             var psi = new ProcessStartInfo(Ffmpeg, args.ToString())
             {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardError = true,

@@ -10,7 +10,15 @@ public static class MoflexExport
     /// <summary>Decodes the audio stream (FastAudio, IMA-ADPCM or PCM) to a 16-bit WAV file.</summary>
     public static void WriteWav(MoflexFile file, Stream output)
     {
+        var pcm = DecodeAudio(file, out int rate, out int channels);
+        WavFile.Write(output, pcm, rate, channels);
+    }
+
+    /// <summary>Decodes the audio stream to interleaved 16-bit little-endian PCM.</summary>
+    public static byte[] DecodeAudio(MoflexFile file, out int sampleRate, out int channels)
+    {
         var a = file.Streams.FirstOrDefault(x => x.Kind == StreamKind.Audio) ?? throw new InvalidDataException("The file has no audio stream.");
+        sampleRate = a.SampleRate; channels = a.Channels;
         var pcm = new MemoryStream();
         var fast = a.CodecId == 0 ? new FastAudioDecoder(a.Channels) : null;
         foreach (var p in file.Packets.Where(p => p.StreamIndex == a.Index))
@@ -30,7 +38,7 @@ public static class MoflexExport
             else if (a.CodecId == 2) pcm.Write(p.Data);
             else throw new NotSupportedException($"Audio codec {a.CodecName} is not supported yet.");
         }
-        WavFile.Write(output, pcm.GetBuffer().AsSpan(0, (int)pcm.Length), a.SampleRate, a.Channels);
+        return pcm.ToArray();
     }
 
     /// <summary>Decodes the video stream to raw planar YUV 4:2:0 (all stored frames, both eyes for 3D files).</summary>

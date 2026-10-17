@@ -34,15 +34,18 @@
             </ComboBox>
             <ProgressBar x:Name="ExportProgress" Minimum="0" Maximum="100" Width="200" VerticalAlignment="Center" />
           </WrapPanel>
-          <TextBlock DockPanel.Dock="Top" x:Name="FileLabel" Text="No file opened." Margin="0,0,0,6" />
+          <TextBlock DockPanel.Dock="Top" x:Name="FileLabel" Text="No file opened." Margin="0,0,0,2" />
+          <TextBlock DockPanel.Dock="Top" x:Name="StereoLabel" Text="" Margin="0,0,0,6" Opacity="0.8" />
           <TextBox DockPanel.Dock="Bottom" x:Name="InfoBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
                    FontFamily="Consolas, Menlo, monospace" Height="150" Margin="0,6,0,0" />
-          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto" Margin="0,6,0,0">
+          <Grid DockPanel.Dock="Bottom" ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,6,0,0">
             <Button x:Name="PlayButton" Content="Play" Width="70" Click="OnPlayPause" IsEnabled="False" />
             <Slider Grid.Column="1" x:Name="SeekSlider" Minimum="0" Maximum="0" Margin="8,0" IsEnabled="False"
                     ValueChanged="OnSeek" />
             <TextBlock Grid.Column="2" x:Name="TimeLabel" Text="0:00.00 / 0:00.00" VerticalAlignment="Center"
                        FontFamily="Consolas, Menlo, monospace" />
+            <CheckBox Grid.Column="3" x:Name="SoundBox" Content="Sound" IsChecked="True" Margin="12,0,0,0"
+                      IsCheckedChanged="OnSoundChanged" />
           </Grid>
           <Border Background="Black" CornerRadius="4">
             <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="None" />

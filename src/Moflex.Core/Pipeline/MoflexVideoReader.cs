@@ -12,6 +12,23 @@ public enum EyeLayout
     Right,
 }
 
+/// <summary>How different the two eyes of a 3D movie are.</summary>
+/// <param name="Pairs">Left/right pictures compared.</param>
+/// <param name="DifferentPairs">Pairs whose eyes differ by more than <see cref="DifferentThreshold"/> (mean absolute luma difference).</param>
+/// <param name="MaxDifference">Largest mean absolute luma difference of a pair.</param>
+public sealed record StereoReport(int Pairs, int DifferentPairs, double MaxDifference)
+{
+    /// <summary>Above coding noise: the same picture coded twice stays well below this.</summary>
+    public const double DifferentThreshold = 1.5;
+
+    /// <summary>The eyes really differ (depth), rather than both showing the same flat picture.</summary>
+    public bool IsReal3D => DifferentPairs > 0;
+
+    public override string ToString() => IsReal3D
+        ? $"real 3D: the eyes differ in {DifferentPairs} of {Pairs} pictures ({100.0 * DifferentPairs / Math.Max(1, Pairs):0.#} %)"
+        : $"flat: 3D layout, but both eyes show the same picture in all {Pairs} pictures";
+}
+
 /// <summary>
 /// Decodes the video stream of a MOFLEX file as displayed pictures: one picture per time stamp, with the two eyes
 /// of a 3D movie combined side by side or one eye picked. Supports seeking (decoding restarts at the preceding key frame).
@@ -105,6 +122,32 @@ public sealed class MoflexVideoReader
             Array.Copy(r.V, y * cw, f.V, y * cw * 2 + cw, cw);
         }
         return f;
+    }
+
+    /// <summary>
+    /// Decodes every picture of a 3D movie and compares the two eyes. Returns null for a 2D movie.
+    /// </summary>
+    public static StereoReport? AnalyzeStereo(MoflexFile file, Action<int, int>? progress = null, CancellationToken ct = default)
+    {
+        var r = new MoflexVideoReader(file, EyeLayout.SideBySide);
+        if (!r.IsStereo) return null;
+        var dec = new MobiclipDecoder(r._eyeW, r.Height);
+        int pairs = 0, differ = 0;
+        double max = 0;
+        for (int i = 0; i + 1 < r._packets.Count; i += 2)
+        {
+            ct.ThrowIfCancellationRequested();
+            var l = dec.Decode(r._packets[i].Data);
+            var rt = dec.Decode(r._packets[i + 1].Data);
+            long s = 0;
+            for (int k = 0; k < l.Y.Length; k++) s += Math.Abs(l.Y[k] - rt.Y[k]);
+            double mad = s / (double)l.Y.Length;
+            max = Math.Max(max, mad);
+            if (mad > StereoReport.DifferentThreshold) differ++;
+            pairs++;
+            progress?.Invoke(pairs, r.FrameCount);
+        }
+        return new StereoReport(pairs, differ, max);
     }
 
     /// <summary>Converts a picture to 32-bit BGRA (BT.601, limited range), e.g. for display.</summary>

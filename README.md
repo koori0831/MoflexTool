@@ -44,7 +44,7 @@ FFmpeg is only used as an external program to decode and scale the input.
 ## CLI
 
 ```bash
-moflex info movie.moflex                       # streams, frame rate, 3D layout, sizes
+moflex info movie.moflex                       # streams, frame rate, 3D layout (real 3D or flat), sizes
 moflex export-video movie.moflex movie.avi     # one lossless video file with sound, ready to edit
 moflex export-audio movie.moflex movie.wav     # decode audio only
 moflex export-video movie.moflex movie.yuv     # decode video only (raw yuv420p, every stored frame)
@@ -54,7 +54,8 @@ moflex remux movie.moflex rebuilt.moflex       # rebuild the file with the muxer
 
 `export-video` to `.avi` or `.mov` decodes the picture with the built-in decoder and stores it losslessly
 (Ut Video by default, `--codec ffv1|magicyuv|rawvideo` for others) with 16-bit PCM sound; FFmpeg only writes the
-container. A 3D movie becomes one side-by-side picture (left half = left eye); `--eye left|right` keeps one eye.
+container. A real 3D movie becomes one side-by-side picture (left half = left eye). A movie stored in 3D layout whose eyes
+show the same picture everywhere is exported as ordinary 2D (one eye); `--eye sbs|left|right` overrides this.
 Encoding such a side-by-side file with `--like` a 3D movie restores the two eyes automatically.
 
 ### Replacing a game movie
@@ -77,7 +78,7 @@ Without a reference: `moflex encode in.mp4 -o out.moflex --size 400x240 --fps 30
 ## GUI
 
 `MoflexTool` has two tabs:
-**Inspect / Export** (open a `.moflex`, preview it with play/pause/seek, export a lossless AVI/MOV or WAV/YUV, verify) and
+**Inspect / Export** (open a `.moflex`, preview it with sound and play/pause/seek, tell real 3D from flat 3D, export a lossless AVI/MOV or WAV/YUV, verify) and
 **Encode** (input video, optional reference movie, quality, side-by-side option, progress).
 
 ## How it was built

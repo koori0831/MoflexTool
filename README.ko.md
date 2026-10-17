@@ -44,7 +44,7 @@ mp4, mkv 같은 일반 영상을 인코딩하려면 [FFmpeg](https://ffmpeg.org/
 ## CLI
 
 ```bash
-moflex info movie.moflex                       # 스트림, 프레임 레이트, 3D 레이아웃, 크기
+moflex info movie.moflex                       # 스트림, 프레임 레이트, 3D 레이아웃(진짜 3D인지 포함), 크기
 moflex export-video movie.moflex movie.avi     # 소리까지 담긴 무손실 영상 파일 하나 (바로 편집 가능)
 moflex export-audio movie.moflex movie.wav     # 오디오만 디코딩
 moflex export-video movie.moflex movie.yuv     # 영상만 디코딩 (raw yuv420p, 저장된 모든 프레임)
@@ -54,7 +54,8 @@ moflex remux movie.moflex rebuilt.moflex       # 먹서로 파일 재구성
 
 `.avi`나 `.mov`로 `export-video`를 하면 내장 디코더로 화면을 디코딩해 무손실로 저장합니다(기본 Ut Video,
 `--codec ffv1|magicyuv|rawvideo`로 변경 가능). 소리는 16비트 PCM이고, FFmpeg는 컨테이너를 쓰는 데만 쓰입니다.
-3D 영상은 좌우 나란히(SBS) 한 화면(왼쪽 절반 = 왼쪽 눈)이 되고, `--eye left|right`로 한쪽 눈만 뽑을 수 있습니다.
+진짜 3D 영상은 좌우 나란히(SBS) 한 화면(왼쪽 절반 = 왼쪽 눈)이 됩니다. 3D 레이아웃이지만 양쪽 눈이 끝까지 같은
+화면이면 일반 2D(한쪽 눈)로 내보냅니다. `--eye sbs|left|right`로 직접 정할 수 있습니다.
 이 SBS 파일을 3D 영상을 `--like`로 주고 인코딩하면 자동으로 좌/우 프레임으로 돌아갑니다.
 
 ### 게임 영상 교체
@@ -77,7 +78,7 @@ moflex encode edited.mp4 -o inGame1.moflex --like original/inGame1.moflex -q 18 
 ## GUI
 
 `MoflexTool`은 두 개의 탭으로 되어 있습니다.
-**Inspect / Export**(`.moflex` 열기, 재생·일시정지·탐색 미리보기, 무손실 AVI/MOV 또는 WAV/YUV 추출, 검증)와
+**Inspect / Export**(`.moflex` 열기, 소리 포함 재생·일시정지·탐색 미리보기, 진짜 3D 판별, 무손실 AVI/MOV 또는 WAV/YUV 추출, 검증)와
 **Encode**(입력 영상, 기준 영상(선택), 화질, SBS 옵션, 진행률).
 
 ## 개발 방식

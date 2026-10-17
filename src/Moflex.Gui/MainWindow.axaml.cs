@@ -27,6 +27,9 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _playCts;
     private int _seekRequest = -1, _seekBusy;
     private bool _sliderUpdating;
+    private WaveOutPlayer? _audio;
+    private volatile bool _restartAudio;
+    private CancellationTokenSource? _analyzeCts;
 
     private static readonly FilePickerFileType MoflexType = new("MOFLEX video") { Patterns = new[] { "*.moflex" } };
     private static readonly FilePickerFileType AviType = new("AVI video") { Patterns = new[] { "*.avi" } };
@@ -40,6 +43,8 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _playCts?.Cancel();
+        _analyzeCts?.Cancel();
+        _audio?.Dispose();
         base.OnClosed(e);
     }
 
@@ -99,6 +104,7 @@ public partial class MainWindow : Window
             InfoBox.Text = MoflexExport.Describe(_file);
             SetInspectEnabled(true);
             LoadPreview(_file, 0);
+            await AnalyzeOpenedFile(_file);
         }
         catch (Exception ex) { InfoBox.Text = "Could not read the file: " + ex.Message; SetInspectEnabled(false); }
     }
@@ -110,7 +116,7 @@ public partial class MainWindow : Window
         if (target == null) return;
         var job = new VideoExport
         {
-            File = _file, Output = target, Ffmpeg = Ffmpeg, Eyes = Eyes,
+            File = _file, Output = target, Ffmpeg = Ffmpeg, Eyes = _reader?.IsStereo == true ? Eyes : null,
             Codec = (CodecBox.SelectedItem as ComboBoxItem)?.Content as string ?? "utvideo",
             Progress = (n, total) => Dispatcher.UIThread.Post(() => ExportProgress.Value = total > 0 ? n * 100.0 / total : 0),
         };
@@ -173,6 +179,49 @@ public partial class MainWindow : Window
     }
 
     // ---------- preview ----------
+
+    /// <summary>Loads the sound for the preview and checks whether a 3D movie really differs between the eyes.</summary>
+    private async Task AnalyzeOpenedFile(MoflexFile file)
+    {
+        _analyzeCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _analyzeCts = cts;
+        _audio?.Dispose();
+        _audio = null;
+        StereoLabel.Text = "";
+        if (WaveOutPlayer.IsSupported && file.Streams.Any(s => s.Kind == StreamKind.Audio))
+        {
+            try
+            {
+                var pcm = await Task.Run(() => MoflexExport.DecodeAudio(file, out int rate, out int ch) is var d ? (d, rate, ch) : default, cts.Token);
+                if (cts.IsCancellationRequested) return;
+                _audio = new WaveOutPlayer(pcm.d, pcm.rate, pcm.ch);
+                _restartAudio = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { InfoBox.Text += Environment.NewLine + "Preview sound unavailable: " + ex.Message; }
+            catch (OperationCanceledException) { return; }
+        }
+        if (_reader?.IsStereo != true) return;
+        StereoLabel.Text = "3D: comparing the left and right pictures...";
+        try
+        {
+            var report = await Task.Run(() => MoflexVideoReader.AnalyzeStereo(file, ct: cts.Token), cts.Token);
+            if (cts.IsCancellationRequested || report == null) return;
+            StereoLabel.Text = report.IsReal3D
+                ? "3D: " + report + ". Exported side by side."
+                : "3D layout, but both eyes show the same picture (2D movie). Exported as one eye.";
+            InfoBox.Text += $"{Environment.NewLine}3D         : {report}";
+            EyeBox.SelectedIndex = report.IsReal3D ? 0 : 1;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { StereoLabel.Text = "3D check failed: " + ex.Message; }
+    }
+
+    private void OnSoundChanged(object? sender, RoutedEventArgs e)
+    {
+        if (SoundBox.IsChecked == true) _restartAudio = true;
+        else _audio?.Stop();
+    }
 
     private void LoadPreview(MoflexFile file, int frame)
     {
@@ -271,16 +320,19 @@ public partial class MainWindow : Window
 
     private void StopPlayback()
     {
+        _audio?.Stop();
         _playCts?.Cancel();
         _playCts = null;
         PlayButton.Content = "Play";
     }
 
+    // The picture follows a clock that starts with the sound; after a seek (or a sound toggle) both restart together.
+    // A picture that is late by more than one frame is decoded but not shown, so the picture catches up with the sound.
     private void PlayLoop(MoflexVideoReader reader, int gen, CancellationToken ct)
     {
-        var clock = Stopwatch.StartNew();
-        double frameSeconds = (double)reader.FpsDen / reader.FpsNum;
-        long shown = 0;
+        var clock = new Stopwatch();
+        double frameSeconds = (double)reader.FpsDen / reader.FpsNum, start = 0;
+        int expected = -1;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -293,11 +345,19 @@ public partial class MainWindow : Window
                     f = reader.Read();
                 }
                 if (f == null) break;
-                Show(f, index, gen);
-                shown++;
-                double wait = shown * frameSeconds - clock.Elapsed.TotalSeconds;
+                if (index != expected || _restartAudio)
+                {
+                    _restartAudio = false;
+                    start = reader.Seconds(index);
+                    clock.Restart();
+                    var audio = _audio;
+                    if (audio != null && !ct.IsCancellationRequested && Dispatcher.UIThread.Invoke(() => SoundBox.IsChecked == true)) audio.Play(start);
+                }
+                expected = index + 1;
+                double wait = reader.Seconds(index) - start - clock.Elapsed.TotalSeconds;
                 if (wait > 0) ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(wait));
-                else if (wait < -0.5) { clock.Restart(); shown = 0; } // fell behind: drop the backlog
+                if (ct.IsCancellationRequested) break;
+                if (wait > -frameSeconds) Show(f, index, gen);
             }
         }
         catch (Exception ex) { Dispatcher.UIThread.Post(() => InfoBox.Text += Environment.NewLine + "Preview: " + ex.Message); }
