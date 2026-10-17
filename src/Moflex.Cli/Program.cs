@@ -46,6 +46,20 @@ internal static class Program
                     bw.Write("data"u8); bw.Write((int)pcm.Length); pcm.WriteTo(o);
                     return 0;
                 }
+                case "video-yuv":
+                {
+                    var v = file.Streams.First(x => x.Kind == StreamKind.Video);
+                    var dec = new Moflex.Core.Video.MobiclipDecoder(v.Width, v.Height);
+                    using var o = File.Create(args[2]);
+                    int n = 0, max = args.Length > 3 ? int.Parse(args[3]) : int.MaxValue;
+                    foreach (var p in file.Packets.Where(p => p.StreamIndex == v.Index))
+                    {
+                        if (n++ >= max) break;
+                        var fr = dec.Decode(p.Data);
+                        o.Write(fr.Y); o.Write(fr.U); o.Write(fr.V);
+                    }
+                    return 0;
+                }
                 case "remux-check":
                 {
                     var orig = File.ReadAllBytes(args[1]);
